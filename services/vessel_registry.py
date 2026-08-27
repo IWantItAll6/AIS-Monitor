@@ -23,7 +23,18 @@ class VesselRegistry:
                 "rssi": None,
                 "last_seen": datetime.now(),
                 "track": [],
-                "pinned": False
+                "pinned": False,
+
+                # Captured for every vessel regardless of whether the UI
+                # currently shows them — see nav_status (shown) vs. the rest
+                # (stored for a possible future "choose extra fields" view).
+                "nav_status": None,
+                "rot": None,
+                "destination": "",
+                "draught": None,
+                "imo": None,
+                "length": None,
+                "beam": None
             }
         )
 

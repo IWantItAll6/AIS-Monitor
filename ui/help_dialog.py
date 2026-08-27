@@ -64,8 +64,27 @@ processed.
 <h3>Settings</h3>
 <p>
 <b>Communications</b> configures the AIS (and optional separate GNSS)
-serial port, baud rate, and — under the collapsed <b>Advanced</b> section —
-the data/parity/stop-bit format (8N1 covers most equipment).
+serial port and baud rate. If your receiver doesn't communicate
+correctly, check the collapsed <b>Advanced</b> section:
+</p>
+<p>
+The <b>Serial Format</b> describes how each byte of data is framed on the
+wire — it's written as three parts, e.g. <b>8N1</b>:
+</p>
+<ul>
+<li><b>Data bits</b> (the first number, e.g. 8 or 7) — how many bits carry
+the actual data in each byte.</li>
+<li><b>Parity</b> (the letter) — a basic error-check bit: <b>N</b>one,
+<b>E</b>ven, or <b>O</b>dd.</li>
+<li><b>Stop bits</b> (the last number) — how many bits mark the end of a
+byte.</li>
+</ul>
+<p>
+<b>8N1</b> is the standard default for NMEA 0183 equipment (which is what
+AIS and GNSS receivers speak) and covers most receivers. If yours needs
+something else, it'll be in the receiver's manual — AIS and GNSS can be
+configured independently here, since combined and split receiver setups
+sometimes use different formats.
 </p>
 <p>
 <b>Preferences</b> sets the app's light/dark theme, how long a vessel can

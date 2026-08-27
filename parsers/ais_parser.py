@@ -1,6 +1,19 @@
 from pyais import decode
 from datetime import datetime
 
+
+def enum_label(value):
+    """pyais decodes several fields (ship_type, status) as enums most of the
+    time, but not reliably for every code — confirmed empirically against
+    real data. Falls back to the raw value's string rather than assuming
+    .name is always present."""
+
+    if value is None:
+        return None
+
+    return value.name.replace("_", " ") if hasattr(value, "name") else str(value)
+
+
 class AISParser:
 
     def __init__(self, registry):
@@ -90,15 +103,35 @@ class AISParser:
                 vessel["callsign"] = msg.callsign
 
             # ship_type 0 is AIS's own "not available" value, same idea as
-            # the speed/course/heading sentinels above. pyais usually decodes
-            # this as a ShipType enum, but falls back to a plain int for some
-            # message/field paths (e.g. an unset field's default value) —
-            # handle both rather than assuming .name is always there.
+            # the speed/course/heading sentinels above.
             if hasattr(msg, "ship_type") and msg.ship_type:
-                ship_type = msg.ship_type
-                vessel["type"] = (
-                    ship_type.name.replace("_", " ") if hasattr(ship_type, "name") else str(ship_type)
-                )
+                vessel["type"] = enum_label(msg.ship_type)
+
+            # Unlike ship_type, nav status 0 ("under way using engine") is a
+            # real, common status, not a sentinel — no truthiness filter.
+            if hasattr(msg, "status"):
+                vessel["nav_status"] = enum_label(msg.status)
+
+            if hasattr(msg, "turn"):
+                # -128 (TurnRate.NO_TI_DEFAULT) means no turn info available.
+                vessel["rot"] = None if msg.turn == -128 else float(msg.turn)
+
+            if hasattr(msg, "destination") and msg.destination:
+                vessel["destination"] = msg.destination
+
+            if hasattr(msg, "draught") and msg.draught:
+                vessel["draught"] = msg.draught
+
+            if hasattr(msg, "imo") and msg.imo:
+                vessel["imo"] = msg.imo
+
+            if hasattr(msg, "to_bow") and hasattr(msg, "to_stern"):
+                if msg.to_bow or msg.to_stern:
+                    vessel["length"] = msg.to_bow + msg.to_stern
+
+            if hasattr(msg, "to_port") and hasattr(msg, "to_starboard"):
+                if msg.to_port or msg.to_starboard:
+                    vessel["beam"] = msg.to_port + msg.to_starboard
 
             return vessel
 

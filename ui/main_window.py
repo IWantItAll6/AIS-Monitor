@@ -205,6 +205,7 @@ class MainWindow(QMainWindow):
         self.detail_sog = QLabel("-")
         self.detail_cog = QLabel("-")
         self.detail_heading = QLabel("-")
+        self.detail_nav_status = QLabel("-")
 
         title = QLabel("Selected Vessel")
         font = title.font()
@@ -252,6 +253,9 @@ class MainWindow(QMainWindow):
 
         details_layout.addWidget(QLabel("Heading:"), 7, 0)
         details_layout.addWidget(self.detail_heading, 7, 1)
+
+        details_layout.addWidget(QLabel("Nav Status:"), 7, 2)
+        details_layout.addWidget(self.detail_nav_status, 7, 3)
 
         target_layout.addWidget(details_widget)
 
@@ -1057,12 +1061,14 @@ class MainWindow(QMainWindow):
 
         self.detail_lat.setText("-" if vessel.get("lat") is None else str(vessel["lat"]))
         self.detail_lon.setText("-" if vessel.get("lon") is None else str(vessel["lon"]))
-        self.detail_sog.setText("-" if vessel.get("sog") is None else str(vessel["sog"]))
-        self.detail_cog.setText("-" if vessel.get("cog") is None else str(vessel["cog"]))
+        self.detail_sog.setText("-" if vessel.get("sog") is None else f"{vessel['sog']:.1f} kn")
+        self.detail_cog.setText("-" if vessel.get("cog") is None else f"{vessel['cog']:.0f}°")
 
         self.detail_heading.setText(
-            "-" if vessel.get("heading") is None else str(vessel["heading"])
+            "-" if vessel.get("heading") is None else f"{vessel['heading']}°"
         )
+
+        self.detail_nav_status.setText(vessel.get("nav_status") or "-")
 
         rssi = vessel.get("rssi")
 
@@ -1112,6 +1118,7 @@ class MainWindow(QMainWindow):
         self.detail_sog.setText("-")
         self.detail_cog.setText("-")
         self.detail_heading.setText("-")
+        self.detail_nav_status.setText("-")
         self.detail_range.setText("-")
         self.detail_bearing.setText("-")
         self.detail_rssi.setText("-")

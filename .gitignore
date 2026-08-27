@@ -25,5 +25,8 @@ data/recordings/
 
 # Real field-test capture logs — can bake in a real receiver's test
 # location, so kept local rather than committed. See resources/README.md.
+# sample_replay.log is fully synthetic (see scripts/generate_sample_log.py)
+# and safe to publish, so it's the one exception.
 resources/*
 !resources/README.md
+!resources/sample_replay.log
