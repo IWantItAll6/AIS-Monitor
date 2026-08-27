@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon
 import re
+from collections import deque
 from datetime import datetime
 
 from ui.communications_dialog import CommunicationsDialog
@@ -36,7 +37,7 @@ from services.vessel_registry import VesselRegistry
 from parsers.ais_parser import AISParser
 from parsers.gnss_parser import GNSSParser
 from parsers.psmt_parser import PSMTParser
-from services.geo import (calculate_range_bearing)
+from services.geo import calculate_range_bearing, format_distance
 from ui.vessel_tree_item import VesselTreeItem
 from services.replay_service import ReplayService
 from ui.map_panel import MapPanel
@@ -74,7 +75,7 @@ class MainWindow(QMainWindow):
 
         self.registry = VesselRegistry()
 
-        self.own_track = []
+        self.own_track = deque()
 
         self.ais_parser = AISParser(self.registry)
         self.gnss_parser = GNSSParser()
@@ -137,6 +138,8 @@ class MainWindow(QMainWindow):
             "data/naturalearth/ne_10m_populated_places/ne_10m_populated_places_simple.shp",
             "data/geonames/gb_towns.json"
         )
+
+        self.map_view.set_distance_unit(self.settings["distance_unit"])
 
         map_layout.addWidget(self.map_view)
 
@@ -371,6 +374,8 @@ class MainWindow(QMainWindow):
 
         self.faster_action = toolbar.addAction("Faster ▶")
 
+        self.skip_to_end_action = toolbar.addAction("⏭ Skip to End")
+
         self.exit_replay_action = toolbar.addAction("⏏ Exit Replay")
 
         #
@@ -399,6 +404,7 @@ class MainWindow(QMainWindow):
 
         self.slower_action.setEnabled(False)
         self.faster_action.setEnabled(False)
+        self.skip_to_end_action.setEnabled(False)
         self.exit_replay_action.setEnabled(False)
 
         #
@@ -409,6 +415,7 @@ class MainWindow(QMainWindow):
         self.pause_action.triggered.connect(self.pause_clicked)
         self.stop_action.triggered.connect(self.stop_clicked)
         self.clear_action.triggered.connect(self.clear_clicked)
+        self.skip_to_end_action.triggered.connect(self.skip_to_end_clicked)
         self.exit_replay_action.triggered.connect(self.exit_replay)
         self.center_gnss_action.triggered.connect(self.center_on_gnss)
 
@@ -731,7 +738,7 @@ class MainWindow(QMainWindow):
                 vessel["range"] = rng
                 vessel["bearing"] = brg
 
-                range_text = f"{rng:.2f}nm"
+                range_text = format_distance(rng, self.settings.get("distance_unit", "NM"))
                 bearing_text = f"{brg:.0f}°"
 
             seen_text = self.format_seen(vessel)
@@ -824,6 +831,7 @@ class MainWindow(QMainWindow):
             SettingsService.save(self.settings)
             apply_theme(QApplication.instance(), self.settings["theme"])
             apply_title_bar_theme(self, self.settings["theme"])
+            self.map_view.set_distance_unit(self.settings["distance_unit"])
 
     def create_menu(self):
         menu = self.menuBar()
@@ -931,9 +939,39 @@ class MainWindow(QMainWindow):
         self.current_mode = "Replay"
         self.slower_action.setEnabled(True)
         self.faster_action.setEnabled(True)
+        self.skip_to_end_action.setEnabled(True)
         self.exit_replay_action.setEnabled(True)
         self.replay_progress.setValue(0)
         self.update_status()
+
+    def skip_to_end_clicked(self):
+
+        if not self.replay.filename:
+            return
+
+        self.replay_timer.stop()
+        self.seen_timer.stop()
+
+        # A tight loop with no timer pacing — Qt coalesces the many
+        # update()/repaint requests triggered along the way into a single
+        # repaint once control returns to the event loop, so this is close
+        # to as fast as the underlying parsing itself, not bottlenecked by
+        # per-message UI rendering.
+        while self.replay.has_next():
+
+            line = self.replay.next_line()
+
+            self.process_sentence(line)
+
+        self.replay_progress.setValue(self.replay.progress())
+
+        self.current_mode = "Stopped"
+
+        self.start_action.setEnabled(True)
+        self.pause_action.setEnabled(False)
+        self.stop_action.setEnabled(True)
+
+        self.update_target_tree()
 
     def exit_replay(self):
 
@@ -943,6 +981,7 @@ class MainWindow(QMainWindow):
 
         self.slower_action.setEnabled(False)
         self.faster_action.setEnabled(False)
+        self.skip_to_end_action.setEnabled(False)
         self.exit_replay_action.setEnabled(False)
 
         self.current_mode = "Stopped"
@@ -1078,7 +1117,7 @@ class MainWindow(QMainWindow):
         self.detail_type.setText(vessel.get("type") or "-")
 
         if "range" in vessel:
-            self.detail_range.setText(f"{vessel['range']:.2f}nm")
+            self.detail_range.setText(format_distance(vessel["range"], self.settings.get("distance_unit", "NM")))
         else:
             self.detail_range.setText("-")
 
@@ -1107,7 +1146,7 @@ class MainWindow(QMainWindow):
         self.tree_items.clear()
 
         self.last_ais_mmsi = None
-        self.own_track = []
+        self.own_track = deque()
 
         self.detail_mmsi.setText("-")
         self.detail_name.setText("-")
@@ -1180,11 +1219,7 @@ class MainWindow(QMainWindow):
         track_seconds = int(track_length_setting) * 60
 
         for vessel in self.registry.vessels.values():
-
-            vessel["track"] = [
-                point for point in vessel["track"]
-                if (self.replay.current_time - point[0]).total_seconds() <= track_seconds
-            ]
+            self.trim_track(vessel["track"], track_seconds)
 
     def trim_own_track(self):
 
@@ -1198,7 +1233,17 @@ class MainWindow(QMainWindow):
 
         track_seconds = int(track_length_setting) * 60
 
-        self.own_track = [
-            point for point in self.own_track
-            if (self.replay.current_time - point[0]).total_seconds() <= track_seconds
-        ]
+        self.trim_track(self.own_track, track_seconds)
+
+    def trim_track(self, track, track_seconds):
+
+        # Points are always appended in chronological order, so the stale
+        # ones are always a run at the front — popleft() them off directly
+        # (O(1) each on a deque) instead of rebuilding the whole track by
+        # rescanning every point on every call, which made trim cost scale
+        # with total track length instead of with how much is actually
+        # stale since the last trim (measured: 93M+ total_seconds() calls
+        # replaying a single field log with the old rebuild-every-time
+        # approach, once tracks grew into the thousands of points).
+        while track and (self.replay.current_time - track[0][0]).total_seconds() > track_seconds:
+            track.popleft()

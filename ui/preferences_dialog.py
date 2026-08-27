@@ -53,6 +53,30 @@ class PreferencesDialog(QDialog):
         layout.addSpacing(10)
 
         #
+        # Units
+        #
+
+        units_title = QLabel("Units")
+
+        font = units_title.font()
+        font.setBold(True)
+
+        units_title.setFont(font)
+
+        layout.addWidget(units_title)
+
+        units_form = QFormLayout()
+
+        self.distance_unit = QComboBox()
+        self.distance_unit.addItems(["NM", "Miles", "Km"])
+
+        units_form.addRow("Distance", self.distance_unit)
+
+        layout.addLayout(units_form)
+
+        layout.addSpacing(10)
+
+        #
         # Vessel Management
         #
 
@@ -94,11 +118,15 @@ class PreferencesDialog(QDialog):
     def load_settings(self):
         self.theme.setCurrentText(self.settings["theme"])
 
+        self.distance_unit.setCurrentText(self.settings["distance_unit"])
+
         self.vessel_timeout.setCurrentText(self.settings["vessel_timeout"])
         self.track_length.setCurrentText(self.settings["track_length"])
 
     def save_settings(self):
         self.settings["theme"] = self.theme.currentText()
+
+        self.settings["distance_unit"] = self.distance_unit.currentText()
 
         self.settings["vessel_timeout"] = self.vessel_timeout.currentText()
         self.settings["track_length"] = self.track_length.currentText()

@@ -74,3 +74,20 @@ def test_sample_replay_attaches_rssi(sample_result):
     with_rssi = [v for v in window.registry.vessels.values() if v["rssi"] is not None]
 
     assert len(with_rssi) >= 1
+
+
+def test_skip_to_end_processes_the_whole_file_without_error(qapp):
+
+    # Uses its own fresh window/replay rather than the shared fixture —
+    # skip_to_end_clicked() consumes the replay in one go, unlike the other
+    # tests here which step through line by line.
+    window = MainWindow()
+
+    window.replay.load_file(SAMPLE_LOG)
+    window.replay.filename = SAMPLE_LOG
+
+    window.skip_to_end_clicked()
+
+    assert not window.replay.has_next()
+    assert window.current_mode == "Stopped"
+    assert len(window.registry.vessels) == 4

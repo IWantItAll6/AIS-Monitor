@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QPointF, pyqtSignal
 from services.coastline_service import CoastlineService
 from services.places_service import PlacesService
 from services.uk_towns_service import UkTownsService
+from services.geo import NM_PER_UNIT, UNIT_SUFFIX
 
 
 class MapPanel(QWidget):
@@ -63,9 +64,16 @@ class MapPanel(QWidget):
         self.vessels = []
         self.own_position = {"lat": None, "lon": None, "fix": False}
         self.own_track = []
+        self.distance_unit = "NM"
 
         self._drag_start = None
         self._drag_origin = None
+
+    def set_distance_unit(self, unit):
+
+        self.distance_unit = unit
+
+        self.update()
 
     def update_vessels(self, vessels, own_position, own_track):
 
@@ -176,25 +184,26 @@ class MapPanel(QWidget):
 
         # 1 degree of latitude is, by definition, 60 nautical miles — using
         # latitude rather than longitude for the scale avoids the cos(lat)
-        # longitude compression, and keeps units consistent with the range
-        # column elsewhere in the app (nm, not metric).
+        # longitude compression.
         pixels_per_nm = self.pixels_per_degree / 60
 
         if pixels_per_nm <= 0:
             return
 
+        pixels_per_unit = pixels_per_nm / NM_PER_UNIT.get(self.distance_unit, 1.0)
+
         max_bar_px = 150
 
-        nm = self.SCALE_STEPS_NM[0]
+        value = self.SCALE_STEPS_NM[0]
 
         for step in self.SCALE_STEPS_NM:
 
-            if step * pixels_per_nm > max_bar_px:
+            if step * pixels_per_unit > max_bar_px:
                 break
 
-            nm = step
+            value = step
 
-        bar_px = nm * pixels_per_nm
+        bar_px = value * pixels_per_unit
 
         x0 = 15
         y0 = self.height() - 15
@@ -205,11 +214,13 @@ class MapPanel(QWidget):
         painter.drawLine(QPointF(x0, y0 - 4), QPointF(x0, y0 + 4))
         painter.drawLine(QPointF(x0 + bar_px, y0 - 4), QPointF(x0 + bar_px, y0 + 4))
 
+        unit_suffix = UNIT_SUFFIX.get(self.distance_unit, self.distance_unit)
+
         font = painter.font()
         font.setPointSize(8)
         painter.setFont(font)
 
-        painter.drawText(QPointF(x0, y0 - 8), f"{nm:g} nm")
+        painter.drawText(QPointF(x0, y0 - 8), f"{value:g} {unit_suffix}")
 
     def draw_places(self, painter):
 

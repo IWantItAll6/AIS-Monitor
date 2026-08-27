@@ -1,5 +1,27 @@
 from math import radians, sin, cos, sqrt, atan2, degrees
 
+NM_PER_UNIT = {
+    "NM": 1.0,
+    "Miles": 1.150779,
+    "Km": 1.852
+}
+
+UNIT_SUFFIX = {
+    "NM": "NM",
+    "Miles": "mi",
+    "Km": "km"
+}
+
+
+def convert_distance(distance_nm, unit):
+
+    return distance_nm * NM_PER_UNIT.get(unit, 1.0)
+
+
+def format_distance(distance_nm, unit):
+
+    return f"{convert_distance(distance_nm, unit):.2f} {UNIT_SUFFIX.get(unit, unit)}"
+
 
 def calculate_range_bearing(lat1, lon1, lat2, lon2):
 

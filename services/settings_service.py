@@ -20,6 +20,10 @@ class SettingsService:
 
         "theme": "Dark",
 
+        # NM (nautical miles) is the conventional abbreviation in marine
+        # contexts — lowercase "nm" is ambiguous with nanometres in SI units.
+        "distance_unit": "NM",
+
         "vessel_timeout": "10",
         "track_length": "10",
 

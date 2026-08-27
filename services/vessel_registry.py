@@ -1,3 +1,4 @@
+from collections import deque
 from datetime import datetime
 
 class VesselRegistry:
@@ -22,7 +23,11 @@ class VesselRegistry:
                 "heading": None,
                 "rssi": None,
                 "last_seen": datetime.now(),
-                "track": [],
+
+                # deque, not list — trim_vessel_tracks() pops stale entries
+                # from the front on every update; O(1) per pop on a deque
+                # vs. O(n) on a list (which has to shift everything after).
+                "track": deque(),
                 "pinned": False,
 
                 # Captured for every vessel regardless of whether the UI
