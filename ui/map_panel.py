@@ -27,6 +27,13 @@ class MapPanel(QWidget):
 
     SCALE_STEPS_NM = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000]
 
+    # Caps how many town/city dots+labels render regardless of how many
+    # technically qualify by zoom level — without this, a moderate zoom
+    # covering a large area can make thousands of towns worldwide eligible
+    # at once (population-based zoom thresholds don't know how many
+    # candidates fall in the current viewport).
+    MAX_VISIBLE_PLACES = 60
+
     # Points north (up) before rotation — QPainter.rotate() is clockwise,
     # matching compass bearings, so rotating by heading/COG degrees directly
     # points the bow the right way.
@@ -217,21 +224,31 @@ class MapPanel(QWidget):
         painter.setPen(QPen(self.PLACE_COLOR, 1))
         painter.setBrush(self.PLACE_COLOR)
 
-        # More prominent places (lower min_zoom) get first claim on label
-        # space, so a small town's label never bumps a city's.
-        candidates = sorted(
-            (place for place in self.places.places + self.uk_towns.places if place["min_zoom"] <= zoom),
-            key=lambda p: p["min_zoom"]
-        )
+        min_lon, max_lon, min_lat, max_lat = self.visible_bounds()
+
+        # Filter to the viewport BEFORE ranking — a global "min_zoom
+        # eligible" cutoff can still mean thousands of towns worldwide once
+        # zoomed in a moderate amount, most of them nowhere near what's on
+        # screen. Only rank/cap among what's actually in view.
+        in_view = [
+            place for place in self.places.places + self.uk_towns.places
+            if place["min_zoom"] <= zoom
+            and min_lat <= place["lat"] <= max_lat
+            and min_lon <= place["lon"] <= max_lon
+        ]
+
+        # More prominent places (lower min_zoom) get first claim, both on
+        # the cap below and on label space — a small town's dot/label never
+        # bumps a city's.
+        in_view.sort(key=lambda p: p["min_zoom"])
+
+        candidates = in_view[:self.MAX_VISIBLE_PLACES]
 
         placed_label_rects = []
 
         for place in candidates:
 
             point = self.project(place["lat"], place["lon"])
-
-            if not self.rect().contains(point.toPoint()):
-                continue
 
             painter.drawEllipse(point, 2, 2)
 
