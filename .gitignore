@@ -1,0 +1,29 @@
+# IDE project files (PyCharm) — personal, not shared source
+.idea/
+
+# Virtual environment
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Test artifacts
+.pytest_cache/
+
+# Machine-specific settings (serial ports, baud rates, local folder paths).
+# The app falls back to sensible defaults (SettingsService.DEFAULTS) when
+# this file doesn't exist, so a fresh clone works fine without it.
+data/settings.json
+
+# Regenerated automatically on first run (a few seconds) from the committed
+# Natural Earth shapefiles — see services/coastline_service.py.
+data/naturalearth/**/*.cache.json
+
+# Live session recordings — user-generated data, not source.
+data/recordings/
+
+# Real field-test capture logs — can bake in a real receiver's test
+# location, so kept local rather than committed. See resources/README.md.
+resources/*
+!resources/README.md

@@ -1,0 +1,9 @@
+gb_towns.json was generated from GeoNames' GB country dump
+(https://download.geonames.org/export/dump/GB.zip), licensed CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/).
+
+Filtered to: feature class "P" (populated place), population >= 5000,
+within bounding box (49.5, 61.0, -11.0, 2.0) [min_lat, max_lat, min_lon, max_lon].
+
+To regenerate with different criteria, re-download GB.txt from the URL
+above and re-run the filter (see services/uk_towns_service.py history).

@@ -1,0 +1,6 @@
+PyQt6
+pyserial
+pyais
+pynmea2
+pyshp
+pytest
