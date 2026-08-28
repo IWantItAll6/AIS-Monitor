@@ -1,13 +1,12 @@
 from math import cos, sin, radians, log2, hypot
 
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget, QPushButton
 from PySide6.QtGui import QPainter, QColor, QPolygonF, QPen
 from PySide6.QtCore import Qt, QPointF, QRect, Signal
 
 from services.coastline_service import CoastlineService
 from services.places_service import PlacesService
 from services.uk_towns_service import UkTownsService
-from services.rivers_service import RiversService
 from services.geo import NM_PER_UNIT, UNIT_SUFFIX
 
 
@@ -18,7 +17,6 @@ class MapPanel(QWidget):
 
     WATER_COLOR = QColor(20, 40, 60)
     LAND_COLOR = QColor(60, 90, 50)
-    RIVER_COLOR = QColor(50, 90, 130)
     PLACE_COLOR = QColor(230, 220, 190)
     VESSEL_COLOR = QColor(255, 140, 0)
     TRACK_COLOR = QColor(255, 140, 0, 210)
@@ -56,7 +54,14 @@ class MapPanel(QWidget):
     DEFAULT_CENTER_LON = -3.0
     DEFAULT_PIXELS_PER_DEGREE = 45
 
-    def __init__(self, coastline_path, places_path, uk_towns_path, rivers_path):
+    # Matches the per-notch factor wheelEvent already used, so the +/-
+    # buttons feel like a single wheel notch rather than a bigger jump.
+    ZOOM_FACTOR = 1.2
+
+    ZOOM_BUTTON_SIZE = 36
+    ZOOM_BUTTON_MARGIN = 12
+
+    def __init__(self, coastline_path, places_path, uk_towns_path):
         super().__init__()
 
         self.coastline = CoastlineService(coastline_path)
@@ -68,9 +73,6 @@ class MapPanel(QWidget):
         self.uk_towns = UkTownsService(uk_towns_path)
         self.uk_towns.load()
 
-        self.rivers = RiversService(rivers_path)
-        self.rivers.load()
-
         self.center_lat = self.DEFAULT_CENTER_LAT
         self.center_lon = self.DEFAULT_CENTER_LON
 
@@ -81,6 +83,7 @@ class MapPanel(QWidget):
         self.own_track = []
         self.distance_unit = "NM"
         self.scrub_animating = False
+        self.empty_hint = False
 
         # Last successful (radius, angle) per vessel MMSI — tried first each
         # frame before searching fresh, so a label's screen position stays
@@ -91,6 +94,58 @@ class MapPanel(QWidget):
         self._drag_start = None
         self._drag_origin = None
 
+        self.zoom_in_button = self._make_zoom_button("+")
+        self.zoom_out_button = self._make_zoom_button("−")
+
+        self.zoom_in_button.clicked.connect(self.zoom_in)
+        self.zoom_out_button.clicked.connect(self.zoom_out)
+
+    def _make_zoom_button(self, label):
+
+        button = QPushButton(label, self)
+
+        button.setFixedSize(self.ZOOM_BUTTON_SIZE, self.ZOOM_BUTTON_SIZE)
+
+        # Overlaid directly on the map, so it needs its own contrast rather
+        # than inheriting the app's theme palette (which assumes a normal
+        # window background behind it, not variable terrain colors).
+        button.setStyleSheet(
+            "QPushButton {"
+            "  background-color: rgba(0, 0, 0, 150);"
+            "  color: white;"
+            "  font-size: 18px;"
+            "  font-weight: bold;"
+            "  border: 1px solid rgba(255, 255, 255, 80);"
+            "  border-radius: 6px;"
+            "}"
+            "QPushButton:hover { background-color: rgba(40, 40, 40, 180); }"
+            "QPushButton:pressed { background-color: rgba(80, 80, 80, 200); }"
+        )
+
+        return button
+
+    def resizeEvent(self, event):
+
+        super().resizeEvent(event)
+
+        x = self.width() - self.ZOOM_BUTTON_SIZE - self.ZOOM_BUTTON_MARGIN
+        bottom = self.height() - self.ZOOM_BUTTON_SIZE - self.ZOOM_BUTTON_MARGIN
+
+        self.zoom_out_button.move(x, bottom)
+        self.zoom_in_button.move(x, bottom - self.ZOOM_BUTTON_SIZE - 4)
+
+    def zoom_in(self):
+
+        self.pixels_per_degree *= self.ZOOM_FACTOR
+
+        self.update()
+
+    def zoom_out(self):
+
+        self.pixels_per_degree /= self.ZOOM_FACTOR
+
+        self.update()
+
     def set_distance_unit(self, unit):
 
         self.distance_unit = unit
@@ -100,6 +155,15 @@ class MapPanel(QWidget):
     def set_scrub_animating(self, animating):
 
         self.scrub_animating = animating
+
+        self.update()
+
+    def set_empty_hint(self, show):
+
+        if show == self.empty_hint:
+            return
+
+        self.empty_hint = show
 
         self.update()
 
@@ -204,13 +268,43 @@ class MapPanel(QWidget):
 
             painter.drawPolygon(polygon)
 
-        self.draw_rivers(painter)
         self.draw_places(painter)
         self.draw_vessels(painter)
         self.draw_scale_bar(painter)
 
         if self.scrub_animating:
             self.draw_scrub_badge(painter)
+
+        if self.empty_hint:
+            self.draw_empty_hint(painter)
+
+    def draw_empty_hint(self, painter):
+
+        lines = [
+            "No data loaded",
+            "File → Open Replay or Load Sample Data",
+            "or configure Communications and press Start",
+        ]
+
+        font = painter.font()
+        font.setPointSize(11)
+        painter.setFont(font)
+
+        metrics = painter.fontMetrics()
+        line_height = metrics.height()
+
+        painter.setPen(QColor(255, 255, 255, 200))
+
+        top = self.height() / 2 - (len(lines) * line_height) / 2
+
+        for i, line in enumerate(lines):
+
+            text_width = metrics.horizontalAdvance(line)
+
+            x = (self.width() - text_width) / 2
+            y = top + i * line_height + metrics.ascent()
+
+            painter.drawText(QPointF(x, y), line)
 
     def draw_scrub_badge(self, painter):
 
@@ -240,32 +334,6 @@ class MapPanel(QWidget):
             QPointF(x0 + pad_x, y0 + pad_y + metrics.ascent()),
             text
         )
-
-    def draw_rivers(self, painter):
-
-        # Natural Earth's land polygon doesn't carve out every river channel
-        # at this scale — without this, a vessel on a wide river mouth or
-        # estuary can visually appear to be sitting on land.
-        zoom = self.current_zoom_level()
-
-        min_lon, max_lon, min_lat, max_lat = self.visible_bounds()
-
-        painter.setPen(QPen(self.RIVER_COLOR, 1.5))
-
-        for river in self.rivers.rivers:
-
-            if river["min_zoom"] > zoom:
-                continue
-
-            if (
-                river["max_lon"] < min_lon or river["min_lon"] > max_lon
-                or river["max_lat"] < min_lat or river["min_lat"] > max_lat
-            ):
-                continue
-
-            polyline = QPolygonF([self.project(lat, lon) for lon, lat in river["points"]])
-
-            painter.drawPolyline(polyline)
 
     def draw_scale_bar(self, painter):
 
@@ -502,11 +570,11 @@ class MapPanel(QWidget):
 
     def wheelEvent(self, event):
 
-        factor = 1.2 if event.angleDelta().y() > 0 else 1 / 1.2
+        if event.angleDelta().y() > 0:
+            self.zoom_in()
 
-        self.pixels_per_degree *= factor
-
-        self.update()
+        else:
+            self.zoom_out()
 
     def mousePressEvent(self, event):
 

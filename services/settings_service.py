@@ -30,6 +30,8 @@ class SettingsService:
         "last_replay_folder": "",
         "show_stale_targets": False,
 
+        "recordings_folder": "data/recordings",
+
         # Data retention itself is the user's call — we only flag when the
         # recordings folder has grown large, never delete anything.
         "recordings_warning_size_mb": "500",
@@ -44,6 +46,32 @@ class SettingsService:
             "Bearing": True,
             "RSSI": False,
             "Seen": True
+        },
+
+        # Every field in the details panel is independently toggleable
+        # (View > Vessel Detail Fields). The originally-always-shown fields
+        # default on; the ones added later (Destination onward) default off
+        # since most users don't need them.
+        "visible_detail_fields": {
+            "MMSI": True,
+            "Name": True,
+            "Callsign": True,
+            "Type": True,
+            "Position": True,
+            "SOG": True,
+            "COG": True,
+            "Heading": True,
+            "Nav Status": True,
+            "Range": True,
+            "Bearing": True,
+            "RSSI": True,
+            "Seen": True,
+            "Destination": False,
+            "Draught": False,
+            "IMO": False,
+            "Rate of Turn": False,
+            "Length": False,
+            "Beam": False
         }
     }
 

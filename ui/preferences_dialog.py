@@ -1,10 +1,14 @@
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
+    QHBoxLayout,
     QFormLayout,
     QLabel,
+    QLineEdit,
+    QPushButton,
     QComboBox,
-    QDialogButtonBox
+    QDialogButtonBox,
+    QFileDialog
 )
 
 
@@ -121,6 +125,18 @@ class PreferencesDialog(QDialog):
 
         recording_form = QFormLayout()
 
+        self.recordings_folder = QLineEdit()
+        self.recordings_folder.setReadOnly(True)
+
+        self.browse_recordings_button = QPushButton("Browse...")
+        self.browse_recordings_button.clicked.connect(self.browse_recordings_folder)
+
+        recordings_folder_row = QHBoxLayout()
+        recordings_folder_row.addWidget(self.recordings_folder, 1)
+        recordings_folder_row.addWidget(self.browse_recordings_button)
+
+        recording_form.addRow("Recordings Folder", recordings_folder_row)
+
         self.recordings_warning_size = QComboBox()
         self.recordings_warning_size.addItems(["100", "250", "500", "1000", "2000", "No warning"])
         self.recordings_warning_size.setCurrentText("500")
@@ -140,6 +156,15 @@ class PreferencesDialog(QDialog):
 
         layout.addWidget(buttons)
 
+    def browse_recordings_folder(self):
+
+        start_dir = self.recordings_folder.text() or "data/recordings"
+
+        folder = QFileDialog.getExistingDirectory(self, "Choose Recordings Folder", start_dir)
+
+        if folder:
+            self.recordings_folder.setText(folder)
+
     def load_settings(self):
         self.theme.setCurrentText(self.settings["theme"])
 
@@ -148,6 +173,7 @@ class PreferencesDialog(QDialog):
         self.vessel_timeout.setCurrentText(self.settings["vessel_timeout"])
         self.track_length.setCurrentText(self.settings["track_length"])
 
+        self.recordings_folder.setText(self.settings["recordings_folder"])
         self.recordings_warning_size.setCurrentText(self.settings["recordings_warning_size_mb"])
 
     def save_settings(self):
@@ -158,6 +184,7 @@ class PreferencesDialog(QDialog):
         self.settings["vessel_timeout"] = self.vessel_timeout.currentText()
         self.settings["track_length"] = self.track_length.currentText()
 
+        self.settings["recordings_folder"] = self.recordings_folder.text()
         self.settings["recordings_warning_size_mb"] = self.recordings_warning_size.currentText()
 
     def accept(self):

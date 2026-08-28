@@ -59,6 +59,17 @@ class AboutDialog(QDialog):
 
         layout.addSpacing(10)
 
+        license_label = QLabel(
+            "Licensed under the GNU General Public License v3.0.\n"
+            "This program comes with ABSOLUTELY NO WARRANTY. This is free software, "
+            "and you are welcome to redistribute it under the terms of the license — "
+            "see the LICENSE file for details."
+        )
+        license_label.setWordWrap(True)
+        layout.addWidget(license_label)
+
+        layout.addSpacing(10)
+
         credits = QLabel(
             "Map data: Natural Earth (public domain).\n"
             "UK place data: GeoNames (CC BY 4.0, https://www.geonames.org/)."

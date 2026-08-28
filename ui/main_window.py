@@ -20,14 +20,16 @@ from PySide6.QtWidgets import (
     QApplication,
     QWidgetAction,
     QSlider,
-    QToolTip
+    QToolTip,
+    QLineEdit
 )
 
 from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QIcon, QCursor
+from PySide6.QtGui import QIcon, QCursor, QAction, QKeySequence
 import re
 from collections import deque
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from ui.communications_dialog import CommunicationsDialog
 from ui.preferences_dialog import PreferencesDialog
@@ -38,7 +40,7 @@ from services.vessel_registry import VesselRegistry
 from parsers.ais_parser import AISParser
 from parsers.gnss_parser import GNSSParser
 from parsers.psmt_parser import PSMTParser
-from services.geo import calculate_range_bearing, format_distance
+from services.geo import calculate_range_bearing, format_distance, convert_distance
 from ui.vessel_tree_item import VesselTreeItem
 from services.replay_service import ReplayService
 from ui.map_panel import MapPanel
@@ -68,10 +70,12 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon("assets/app_icon.png"))
         self.resize(1400, 900)
 
+        self.restore_window_geometry()
+
         self.replay = ReplayService()
 
         self.serial_readers = []
-        self.recorder = SessionRecorder()
+        self.recorder = SessionRecorder(self.settings["recordings_folder"])
 
         # update_status() runs very frequently (every seen_timer tick and
         # every AIS message via update_target_tree), so a plain timed
@@ -139,7 +143,7 @@ class MainWindow(QMainWindow):
         root_layout = QVBoxLayout()
         central.setLayout(root_layout)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter = self.splitter = QSplitter(Qt.Orientation.Horizontal)
 
         root_layout.addWidget(splitter)
 
@@ -156,8 +160,7 @@ class MainWindow(QMainWindow):
         self.map_view = MapPanel(
             "data/naturalearth/ne_10m_land/ne_10m_land.shp",
             "data/naturalearth/ne_10m_populated_places/ne_10m_populated_places_simple.shp",
-            "data/geonames/gb_towns.json",
-            "data/naturalearth/ne_10m_rivers_lake_centerlines/ne_10m_rivers_lake_centerlines.shp"
+            "data/geonames/gb_towns.json"
         )
 
         self.map_view.set_distance_unit(self.settings["distance_unit"])
@@ -178,6 +181,12 @@ class MainWindow(QMainWindow):
 
         self.targets_label = QLabel("Targets (3)")
         target_layout.addWidget(self.targets_label)
+
+        self.target_search = QLineEdit()
+        self.target_search.setPlaceholderText("Search by MMSI or name…")
+        self.target_search.setClearButtonEnabled(True)
+        self.target_search.textChanged.connect(self.apply_target_filter)
+        target_layout.addWidget(self.target_search)
 
         self.target_tree = QTreeWidget()
         self.tree_items = {}
@@ -208,28 +217,25 @@ class MainWindow(QMainWindow):
         details_layout = QGridLayout()
         details_widget.setLayout(details_layout)
 
-        # Left side
-
         self.detail_mmsi = QLabel("-")
         self.detail_name = QLabel("-")
         self.detail_callsign = QLabel("-")
         self.detail_type = QLabel("-")
-
-        # Right side
-
-        self.detail_range = QLabel("-")
-        self.detail_bearing = QLabel("-")
-        self.detail_rssi = QLabel("-")
-        self.detail_seen = QLabel("-")
-
-        # Lower section
-
-        self.detail_lat = QLabel("-")
-        self.detail_lon = QLabel("-")
+        self.detail_position = QLabel("-")
         self.detail_sog = QLabel("-")
         self.detail_cog = QLabel("-")
         self.detail_heading = QLabel("-")
         self.detail_nav_status = QLabel("-")
+        self.detail_range = QLabel("-")
+        self.detail_bearing = QLabel("-")
+        self.detail_rssi = QLabel("-")
+        self.detail_seen = QLabel("-")
+        self.detail_destination = QLabel("-")
+        self.detail_draught = QLabel("-")
+        self.detail_imo = QLabel("-")
+        self.detail_rot = QLabel("-")
+        self.detail_length = QLabel("-")
+        self.detail_beam = QLabel("-")
 
         title = QLabel("Selected Vessel")
         font = title.font()
@@ -239,56 +245,57 @@ class MainWindow(QMainWindow):
 
         details_layout.addWidget(title, 0, 0)
 
-        details_layout.addWidget(QLabel("MMSI:"), 1, 0)
-        details_layout.addWidget(self.detail_mmsi, 1, 1)
+        # Every field here is independently toggleable from View > Vessel
+        # Detail Fields (see apply_detail_field_visibility). default_visible
+        # keeps the originally-always-shown fields visible out of the box;
+        # the fields added later (Destination onward) default off since most
+        # users don't need them.
+        self.DETAIL_FIELDS = [
+            ("MMSI", "MMSI:", self.detail_mmsi, True),
+            ("Name", "Name:", self.detail_name, True),
+            ("Callsign", "Callsign:", self.detail_callsign, True),
+            ("Type", "Type:", self.detail_type, True),
+            ("Position", "Position:", self.detail_position, True),
+            ("SOG", "SOG:", self.detail_sog, True),
+            ("COG", "COG:", self.detail_cog, True),
+            ("Heading", "Heading:", self.detail_heading, True),
+            ("Nav Status", "Nav Status:", self.detail_nav_status, True),
+            ("Range", "Range:", self.detail_range, True),
+            ("Bearing", "Bearing:", self.detail_bearing, True),
+            ("RSSI", "RSSI:", self.detail_rssi, True),
+            ("Seen", "Seen:", self.detail_seen, True),
+            ("Destination", "Destination:", self.detail_destination, False),
+            ("Draught", "Draught:", self.detail_draught, False),
+            ("IMO", "IMO:", self.detail_imo, False),
+            ("Rate of Turn", "Rate of Turn:", self.detail_rot, False),
+            ("Length", "Length:", self.detail_length, False),
+            ("Beam", "Beam:", self.detail_beam, False),
+        ]
 
-        details_layout.addWidget(QLabel("Range:"), 1, 2)
-        details_layout.addWidget(self.detail_range, 1, 3)
+        self.detail_field_captions = {}
 
-        details_layout.addWidget(QLabel("Name:"), 2, 0)
-        details_layout.addWidget(self.detail_name, 2, 1)
+        for i, (name, caption_text, value_label, default_visible) in enumerate(self.DETAIL_FIELDS):
 
-        details_layout.addWidget(QLabel("Bearing:"), 2, 2)
-        details_layout.addWidget(self.detail_bearing, 2, 3)
+            row = 1 + i // 2
+            col = (i % 2) * 2
 
-        details_layout.addWidget(QLabel("Callsign:"), 3, 0)
-        details_layout.addWidget(self.detail_callsign, 3, 1)
+            caption_label = QLabel(caption_text)
 
-        details_layout.addWidget(QLabel("RSSI:"), 3, 2)
-        details_layout.addWidget(self.detail_rssi, 3, 3)
+            details_layout.addWidget(caption_label, row, col)
+            details_layout.addWidget(value_label, row, col + 1)
 
-        details_layout.addWidget(QLabel("Type:"), 4, 0)
-        details_layout.addWidget(self.detail_type, 4, 1)
-
-        details_layout.addWidget(QLabel("Seen:"), 4, 2)
-        details_layout.addWidget(self.detail_seen, 4, 3)
-
-        details_layout.addWidget(QLabel("Latitude:"), 5, 0)
-        details_layout.addWidget(self.detail_lat, 5, 1)
-
-        details_layout.addWidget(QLabel("Longitude:"), 5, 2)
-        details_layout.addWidget(self.detail_lon, 5, 3)
-
-        details_layout.addWidget(QLabel("SOG:"), 6, 0)
-        details_layout.addWidget(self.detail_sog, 6, 1)
-
-        details_layout.addWidget(QLabel("COG:"), 6, 2)
-        details_layout.addWidget(self.detail_cog, 6, 3)
-
-        details_layout.addWidget(QLabel("Heading:"), 7, 0)
-        details_layout.addWidget(self.detail_heading, 7, 1)
-
-        details_layout.addWidget(QLabel("Nav Status:"), 7, 2)
-        details_layout.addWidget(self.detail_nav_status, 7, 3)
+            self.detail_field_captions[name] = caption_label
 
         target_layout.addWidget(details_widget)
+
+        self.apply_detail_field_visibility()
 
         self.target_tree.setIndentation(0)
         self.target_tree.setRootIsDecorated(False)
 
         splitter.addWidget(self.targets_panel)
 
-        splitter.setSizes([850, 550])
+        splitter.setSizes(self.settings.get("splitter_sizes") or [850, 550])
 
         #
         # RAW DATA
@@ -452,6 +459,27 @@ class MainWindow(QMainWindow):
         self.skip_to_end_action.triggered.connect(self.skip_to_end_clicked)
         self.exit_replay_action.triggered.connect(self.exit_replay)
         self.center_gnss_action.triggered.connect(self.center_on_gnss)
+
+        #
+        # Keyboard shortcuts — also listed with their command in the Run
+        # menu (create_menu), which is the intended way to discover these
+        # rather than needing to already know them.
+        #
+
+        self.start_action.setShortcut(QKeySequence("F5"))
+        self.pause_action.setShortcut(QKeySequence("F6"))
+        self.stop_action.setShortcut(QKeySequence("F7"))
+        self.clear_action.setShortcut(QKeySequence("Ctrl+Shift+C"))
+        self.center_gnss_action.setShortcut(QKeySequence("Ctrl+G"))
+        self.skip_to_end_action.setShortcut(QKeySequence("Ctrl+End"))
+
+        self.zoom_in_action = QAction("Zoom In", self)
+        self.zoom_in_action.setShortcut(QKeySequence("Ctrl+="))
+        self.zoom_in_action.triggered.connect(self.map_view.zoom_in)
+
+        self.zoom_out_action = QAction("Zoom Out", self)
+        self.zoom_out_action.setShortcut(QKeySequence("Ctrl+-"))
+        self.zoom_out_action.triggered.connect(self.map_view.zoom_out)
 
     def start_clicked(self):
 
@@ -670,8 +698,6 @@ class MainWindow(QMainWindow):
 
                 self.update_target_tree()
 
-            self.update_target_tree()
-
         elif sentence.startswith("!AIVDO"):
 
             # Own-ship's echoed position report — decode it like any other
@@ -849,12 +875,30 @@ class MainWindow(QMainWindow):
 
         self.update_status()
 
+        self.apply_target_filter()
+
         if self.selected_mmsi is not None:
 
             vessel = self.registry.get(self.selected_mmsi)
 
             if vessel:
                 self.show_vessel_details(vessel)
+
+    def apply_target_filter(self):
+
+        query = self.target_search.text().strip().lower()
+
+        for mmsi, item in self.tree_items.items():
+
+            if not query:
+                item.setHidden(False)
+                continue
+
+            vessel = self.registry.get(mmsi)
+
+            name = (vessel.name or "").lower() if vessel else ""
+
+            item.setHidden(query not in str(mmsi) and query not in name)
 
     def update_status(self):
 
@@ -874,6 +918,10 @@ class MainWindow(QMainWindow):
 
         self.status_bar.showMessage(message)
 
+        self.map_view.set_empty_hint(
+            self.current_mode == "Stopped" and not self.replay.filename and not self.registry.vessels
+        )
+
     def clear_status_warning(self):
 
         self.status_warning = None
@@ -884,7 +932,41 @@ class MainWindow(QMainWindow):
 
         self.stop_live_serial()
 
+        self.save_window_geometry()
+
         event.accept()
+
+    def restore_window_geometry(self):
+
+        geometry = self.settings.get("window_geometry")
+
+        if not geometry:
+            return
+
+        if geometry.get("maximized"):
+            self.showMaximized()
+
+        else:
+            self.setGeometry(geometry["x"], geometry["y"], geometry["width"], geometry["height"])
+
+    def save_window_geometry(self):
+
+        # normalGeometry() (not geometry()) while maximized, so un-maximizing
+        # next launch restores the size it had before maximizing rather than
+        # the full-screen size.
+        geom = self.normalGeometry() if self.isMaximized() else self.geometry()
+
+        self.settings["window_geometry"] = {
+            "x": geom.x(),
+            "y": geom.y(),
+            "width": geom.width(),
+            "height": geom.height(),
+            "maximized": self.isMaximized()
+        }
+
+        self.settings["splitter_sizes"] = self.splitter.sizes()
+
+        SettingsService.save(self.settings)
 
     def show_communications(self):
 
@@ -902,6 +984,7 @@ class MainWindow(QMainWindow):
             apply_theme(QApplication.instance(), self.settings["theme"])
             apply_title_bar_theme(self, self.settings["theme"])
             self.map_view.set_distance_unit(self.settings["distance_unit"])
+            self.recorder.directory = Path(self.settings["recordings_folder"])
 
     def create_menu(self):
         menu = self.menuBar()
@@ -909,6 +992,30 @@ class MainWindow(QMainWindow):
         file_menu = menu.addMenu("File")
 
         view_menu = menu.addMenu("View")
+
+        run_menu = menu.addMenu("Run")
+
+        # Reuses the exact same QAction objects already wired to the
+        # toolbar buttons — a QAction can live in more than one place at
+        # once, so this menu is purely a second, shortcut-labelled way to
+        # reach the same commands, not a separate set to keep in sync.
+        run_menu.addAction(self.start_action)
+        run_menu.addAction(self.pause_action)
+        run_menu.addAction(self.stop_action)
+        run_menu.addAction(self.clear_action)
+
+        run_menu.addSeparator()
+
+        run_menu.addAction(self.center_gnss_action)
+        run_menu.addAction(self.zoom_in_action)
+        run_menu.addAction(self.zoom_out_action)
+
+        run_menu.addSeparator()
+
+        run_menu.addAction(self.slower_action)
+        run_menu.addAction(self.faster_action)
+        run_menu.addAction(self.skip_to_end_action)
+        run_menu.addAction(self.exit_replay_action)
 
         settings_menu = menu.addMenu("Settings")
 
@@ -947,6 +1054,27 @@ class MainWindow(QMainWindow):
 
             columns_menu.addAction(action)
 
+        detail_fields_menu = view_menu.addMenu("Vessel Detail Fields")
+
+        visible_detail_fields = self.settings.get("visible_detail_fields", {})
+
+        for name, caption_text, value_label, default_visible in self.DETAIL_FIELDS:
+
+            visible = visible_detail_fields.get(name, default_visible)
+
+            checkbox = QCheckBox(name)
+            checkbox.setChecked(visible)
+            checkbox.toggled.connect(
+                lambda checked, n=name: self.set_detail_field_visible(n, checked)
+            )
+
+            # Same QWidgetAction pattern as Select Columns — a checkable
+            # QAction would close the menu on every single toggle.
+            action = QWidgetAction(detail_fields_menu)
+            action.setDefaultWidget(checkbox)
+
+            detail_fields_menu.addAction(action)
+
         self.communications_action = settings_menu.addAction("Communications")
         self.preferences_action = settings_menu.addAction("Preferences")
 
@@ -956,6 +1084,19 @@ class MainWindow(QMainWindow):
         self.open_replay_action = file_menu.addAction("Open Replay...")
 
         self.open_replay_action.triggered.connect(self.open_replay)
+        self.open_replay_action.setShortcut(QKeySequence("Ctrl+O"))
+
+        self.load_sample_action = file_menu.addAction("Load Sample Data")
+
+        self.load_sample_action.triggered.connect(self.load_sample_data)
+
+        export_menu = file_menu.addMenu("Export")
+
+        self.export_screenshot_action = export_menu.addAction("Screenshot...")
+        self.export_screenshot_action.triggered.connect(self.export_screenshot)
+
+        self.export_targets_csv_action = export_menu.addAction("Target List as CSV...")
+        self.export_targets_csv_action.triggered.connect(self.export_targets_csv)
 
         help_menu = menu.addMenu("Help")
 
@@ -975,6 +1116,75 @@ class MainWindow(QMainWindow):
         dialog = AboutDialog()
         dialog.exec()
 
+    def export_screenshot(self):
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Export Screenshot", "screenshot.png", "PNG Image (*.png)"
+        )
+
+        if not filename:
+            return
+
+        # Whole window, not just the map — includes the target list and
+        # detail panel too, per the user's explicit request.
+        self.grab().save(filename, "PNG")
+
+        self.status_bar.showMessage(f"Screenshot exported to {filename}", 5000)
+
+    def export_targets_csv(self):
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Export Target List as CSV", "targets.csv", "CSV File (*.csv)"
+        )
+
+        if not filename:
+            return
+
+        import csv
+
+        unit = self.settings.get("distance_unit", "NM")
+
+        with open(filename, "w", newline="", encoding="utf-8") as f:
+
+            writer = csv.writer(f)
+
+            writer.writerow([
+                "MMSI", "Name", "Callsign", "Type", "Pinned",
+                "Latitude", "Longitude", "SOG (kn)", "COG (deg)", "Heading (deg)",
+                "Nav Status", f"Range ({unit})", "Bearing (deg)", "RSSI",
+                "Last Seen",
+                "Destination", "Draught (m)", "IMO", "Rate of Turn (deg/min)",
+                "Length (m)", "Beam (m)"
+            ])
+
+            for vessel in self.registry.all():
+
+                writer.writerow([
+                    vessel.mmsi,
+                    vessel.name or "",
+                    vessel.callsign or "",
+                    vessel.type or "",
+                    vessel.pinned,
+                    vessel.lat if vessel.lat is not None else "",
+                    vessel.lon if vessel.lon is not None else "",
+                    vessel.sog if vessel.sog is not None else "",
+                    vessel.cog if vessel.cog is not None else "",
+                    vessel.heading if vessel.heading is not None else "",
+                    vessel.nav_status or "",
+                    convert_distance(vessel.range, unit) if vessel.range is not None else "",
+                    vessel.bearing if vessel.bearing is not None else "",
+                    vessel.rssi if vessel.rssi is not None else "",
+                    vessel.last_seen.strftime("%Y-%m-%d %H:%M:%S") if vessel.last_seen else "",
+                    vessel.destination or "",
+                    vessel.draught if vessel.draught is not None else "",
+                    vessel.imo if vessel.imo is not None else "",
+                    vessel.rot if vessel.rot is not None else "",
+                    vessel.length if vessel.length is not None else "",
+                    vessel.beam if vessel.beam is not None else ""
+                ])
+
+        self.status_bar.showMessage(f"Target list exported to {filename}", 5000)
+
     def set_column_visible(self, index, name, visible):
 
         self.target_tree.setColumnHidden(index, not visible)
@@ -982,6 +1192,34 @@ class MainWindow(QMainWindow):
         self.settings.setdefault("visible_columns", {})[name] = visible
 
         SettingsService.save(self.settings)
+
+    def apply_detail_field_visibility(self):
+
+        visible_fields = self.settings.get("visible_detail_fields", {})
+
+        for name, caption_text, value_label, default_visible in self.DETAIL_FIELDS:
+
+            visible = visible_fields.get(name, default_visible)
+
+            self.detail_field_captions[name].setVisible(visible)
+            value_label.setVisible(visible)
+
+    def set_detail_field_visible(self, name, visible):
+
+        self.settings.setdefault("visible_detail_fields", {})[name] = visible
+
+        SettingsService.save(self.settings)
+
+        self.apply_detail_field_visibility()
+
+        # Newly-shown fields shouldn't sit blank until the next AIS message
+        # for the selected vessel — refresh immediately from current data.
+        if self.selected_mmsi is not None:
+
+            vessel = self.registry.get(self.selected_mmsi)
+
+            if vessel:
+                self.show_vessel_details(vessel)
 
     def open_replay(self):
 
@@ -994,15 +1232,30 @@ class MainWindow(QMainWindow):
         if not filename:
             return
 
-        self.reset_session()
-
-        self.replay.load_file(filename)
-
-        from pathlib import Path
-
         self.settings["last_replay_folder"] = str(Path(filename).parent)
 
         SettingsService.save(self.settings)
+
+        self.load_replay_file(filename)
+
+    def load_sample_data(self):
+
+        sample_path = Path("resources/sample_replay.log")
+
+        if not sample_path.exists():
+            QMessageBox.warning(
+                self, "Sample Data Missing",
+                f"Could not find {sample_path} — it should be bundled with the app."
+            )
+            return
+
+        self.load_replay_file(str(sample_path))
+
+    def load_replay_file(self, filename):
+
+        self.reset_session()
+
+        self.replay.load_file(filename)
 
         self.replay.filename = filename
         self.replay.reset()
@@ -1284,8 +1537,11 @@ class MainWindow(QMainWindow):
 
         self.detail_name.setText(vessel.name or "-")
 
-        self.detail_lat.setText("-" if vessel.lat is None else str(vessel.lat))
-        self.detail_lon.setText("-" if vessel.lon is None else str(vessel.lon))
+        if vessel.lat is None or vessel.lon is None:
+            self.detail_position.setText("-")
+        else:
+            self.detail_position.setText(f"{vessel.lat}, {vessel.lon}")
+
         self.detail_sog.setText("-" if vessel.sog is None else f"{vessel.sog:.1f} kn")
         self.detail_cog.setText("-" if vessel.cog is None else f"{vessel.cog:.0f}°")
 
@@ -1312,6 +1568,14 @@ class MainWindow(QMainWindow):
 
         self.detail_seen.setText(self.format_seen(vessel))
 
+        self.detail_destination.setText(vessel.destination or "-")
+
+        self.detail_draught.setText("-" if vessel.draught is None else f"{vessel.draught:.1f} m")
+        self.detail_imo.setText("-" if vessel.imo is None else str(vessel.imo))
+        self.detail_rot.setText("-" if vessel.rot is None else f"{vessel.rot:.0f}°/min")
+        self.detail_length.setText("-" if vessel.length is None else f"{vessel.length} m")
+        self.detail_beam.setText("-" if vessel.beam is None else f"{vessel.beam} m")
+
     def reset_session(self):
 
         # Pinned vessels survive a clear, but with their data wiped back to
@@ -1336,8 +1600,7 @@ class MainWindow(QMainWindow):
         self.detail_name.setText("-")
         self.detail_callsign.setText("-")
         self.detail_type.setText("-")
-        self.detail_lat.setText("-")
-        self.detail_lon.setText("-")
+        self.detail_position.setText("-")
         self.detail_sog.setText("-")
         self.detail_cog.setText("-")
         self.detail_heading.setText("-")
@@ -1346,6 +1609,13 @@ class MainWindow(QMainWindow):
         self.detail_bearing.setText("-")
         self.detail_rssi.setText("-")
         self.detail_seen.setText("-")
+
+        self.detail_destination.setText("-")
+        self.detail_draught.setText("-")
+        self.detail_imo.setText("-")
+        self.detail_rot.setText("-")
+        self.detail_length.setText("-")
+        self.detail_beam.setText("-")
 
         self.update_target_tree()
 
