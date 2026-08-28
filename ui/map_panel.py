@@ -80,6 +80,7 @@ class MapPanel(QWidget):
         self.own_position = {"lat": None, "lon": None, "fix": False}
         self.own_track = []
         self.distance_unit = "NM"
+        self.scrub_animating = False
 
         # Last successful (radius, angle) per vessel MMSI — tried first each
         # frame before searching fresh, so a label's screen position stays
@@ -93,6 +94,12 @@ class MapPanel(QWidget):
     def set_distance_unit(self, unit):
 
         self.distance_unit = unit
+
+        self.update()
+
+    def set_scrub_animating(self, animating):
+
+        self.scrub_animating = animating
 
         self.update()
 
@@ -201,6 +208,38 @@ class MapPanel(QWidget):
         self.draw_places(painter)
         self.draw_vessels(painter)
         self.draw_scale_bar(painter)
+
+        if self.scrub_animating:
+            self.draw_scrub_badge(painter)
+
+    def draw_scrub_badge(self, painter):
+
+        text = "⏩ Catching up…"
+
+        font = painter.font()
+        font.setPointSize(18)
+        font.setBold(True)
+        painter.setFont(font)
+
+        metrics = painter.fontMetrics()
+        text_width = metrics.horizontalAdvance(text)
+
+        pad_x, pad_y = 20, 12
+        badge_width = text_width + pad_x * 2
+        badge_height = metrics.height() + pad_y * 2
+
+        x0 = self.width() - badge_width - 12
+        y0 = 12
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 150))
+        painter.drawRoundedRect(QRect(int(x0), int(y0), int(badge_width), int(badge_height)), 10, 10)
+
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(
+            QPointF(x0 + pad_x, y0 + pad_y + metrics.ascent()),
+            text
+        )
 
     def draw_rivers(self, painter):
 

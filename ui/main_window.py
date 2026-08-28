@@ -15,18 +15,19 @@ from PySide6.QtWidgets import (
     QToolBar,
     QFileDialog,
     QMessageBox,
-    QProgressBar,
     QCheckBox,
     QSizePolicy,
     QApplication,
-    QWidgetAction
+    QWidgetAction,
+    QSlider,
+    QToolTip
 )
 
 from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QCursor
 import re
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ui.communications_dialog import CommunicationsDialog
 from ui.preferences_dialog import PreferencesDialog
@@ -47,6 +48,11 @@ from services.session_recorder import SessionRecorder
 
 
 class MainWindow(QMainWindow):
+
+    # How long the accelerated "show where things came from" preroll
+    # animation takes in wall-clock time when landing on a scrubbed
+    # position, regardless of how much simulated time it covers.
+    SCRUB_ANIMATION_MS = 2500
 
     def __init__(self):
         super().__init__()
@@ -118,6 +124,13 @@ class MainWindow(QMainWindow):
         self.seen_timer.timeout.connect(self.update_target_tree)
 
         self.seen_timer.start(1000)
+
+        self.scrub_timer = QTimer()
+
+        self.scrub_timer.timeout.connect(self.scrub_animation_step)
+
+        self._scrub_target_index = None
+        self._scrub_lines_per_frame = 1
 
     def setup_ui(self):
         central = QWidget()
@@ -387,20 +400,33 @@ class MainWindow(QMainWindow):
         self.exit_replay_action = toolbar.addAction("⏏ Exit Replay")
 
         #
-        # Replay progress
+        # Replay progress / scrubber
         #
 
-        self.replay_progress = QProgressBar()
+        self.replay_scrubber = QSlider(Qt.Orientation.Horizontal)
 
-        self.replay_progress.setValue(0)
-        self.replay_progress.setMinimumWidth(200)
-        self.replay_progress.setMaximumWidth(300)
+        self.replay_scrubber.setMinimumWidth(200)
+        self.replay_scrubber.setMaximumWidth(300)
+        self.replay_scrubber.setEnabled(False)
+
+        self.replay_scrubber.sliderPressed.connect(self.scrubber_pressed)
+        self.replay_scrubber.sliderMoved.connect(self.scrubber_moved)
+        self.replay_scrubber.sliderReleased.connect(self.scrubber_released)
 
         self.faster_action.triggered.connect(self.faster_clicked)
         self.slower_action.triggered.connect(self.slower_clicked)
-        toolbar.addWidget(self.replay_progress)
+        toolbar.addWidget(self.replay_scrubber)
         self.replay_time_label = QLabel("--:--:--")
         toolbar.addWidget(self.replay_time_label)
+
+        self.animate_scrub_checkbox = QCheckBox("Animate on drop")
+        self.animate_scrub_checkbox.setChecked(True)
+        self.animate_scrub_checkbox.setToolTip(
+            "When landing on a scrubbed position, briefly replay the Track "
+            "Length window leading up to it so you can see where vessels "
+            "came from, instead of jumping straight to a static snapshot."
+        )
+        toolbar.addWidget(self.animate_scrub_checkbox)
 
         #
         # Initial button states
@@ -598,7 +624,7 @@ class MainWindow(QMainWindow):
 
         line = self.replay.next_line()
 
-        self.replay_progress.setValue(self.replay.progress())
+        self.replay_scrubber.setValue(self.replay.index)
 
         self.process_sentence(line)
 
@@ -985,7 +1011,10 @@ class MainWindow(QMainWindow):
         self.faster_action.setEnabled(True)
         self.skip_to_end_action.setEnabled(True)
         self.exit_replay_action.setEnabled(True)
-        self.replay_progress.setValue(0)
+        self.replay_scrubber.setMinimum(0)
+        self.replay_scrubber.setMaximum(max(len(self.replay.lines) - 1, 0))
+        self.replay_scrubber.setValue(0)
+        self.replay_scrubber.setEnabled(True)
         self.update_status()
 
     def skip_to_end_clicked(self):
@@ -1007,7 +1036,7 @@ class MainWindow(QMainWindow):
 
             self.process_sentence(line)
 
-        self.replay_progress.setValue(self.replay.progress())
+        self.replay_scrubber.setValue(self.replay.index)
 
         self.current_mode = "Stopped"
 
@@ -1016,6 +1045,134 @@ class MainWindow(QMainWindow):
         self.stop_action.setEnabled(True)
 
         self.update_target_tree()
+
+    def scrubber_pressed(self):
+
+        self.replay_timer.stop()
+        self.seen_timer.stop()
+        self.scrub_timer.stop()
+
+    def scrubber_moved(self, index):
+
+        if not self.replay.lines:
+            return
+
+        index = max(0, min(index, len(self.replay.lines) - 1))
+
+        timestamp = self.replay.extract_timestamp(self.replay.lines[index])
+
+        if timestamp:
+            QToolTip.showText(QCursor.pos(), timestamp.strftime("%Y-%m-%d %H:%M:%S"), self.replay_scrubber)
+
+    def scrubber_released(self):
+
+        self.seek_to_index(self.replay_scrubber.value())
+
+    def seek_to_index(self, target_index):
+
+        if not self.replay.filename or not self.replay.lines:
+            return
+
+        target_index = max(0, min(target_index, len(self.replay.lines) - 1))
+
+        target_time = self.replay.extract_timestamp(self.replay.lines[target_index])
+
+        self.reset_session()
+        self.replay.reset()
+
+        # Default: no animation, process straight through the target line
+        # (inclusive) in the instant/silent loop below.
+        preroll_start_index = target_index + 1
+
+        track_setting = self.settings.get("track_length", "10")
+
+        # "Unlimited" has no finite window to rewind by — fall back to an
+        # instant landing rather than silently inventing an arbitrary
+        # duration the user never configured.
+        if self.animate_scrub_checkbox.isChecked() and target_time is not None and track_setting != "Unlimited":
+
+            window_start = target_time - timedelta(minutes=int(track_setting))
+
+            preroll_start_index = 0
+
+            for i in range(target_index + 1):
+
+                line_time = self.replay.extract_timestamp(self.replay.lines[i])
+
+                if line_time is not None and line_time < window_start:
+                    preroll_start_index = i + 1
+
+                else:
+                    break
+
+            preroll_start_index = min(preroll_start_index, target_index)
+
+        # Silently fast-forward (no timer pacing, same technique as Skip to
+        # End) up to the start of the animated window — or straight to the
+        # target if not animating.
+        while self.replay.index < preroll_start_index:
+            self.process_sentence(self.replay.next_line())
+
+        self._scrub_target_index = target_index
+
+        if self.replay.index <= target_index and self.replay.has_next():
+            self.start_scrub_animation()
+
+        else:
+            self.finish_seek()
+
+    def start_scrub_animation(self):
+
+        remaining = max(self._scrub_target_index - self.replay.index + 1, 1)
+
+        # Multiple lines get bundled into each frame — Qt only actually
+        # repaints once per frame regardless of how many lines it contains
+        # (repeated update() calls between event-loop turns get coalesced),
+        # but each *timer fire* still costs a real event-loop turn, so a
+        # dense window (thousands of messages) firing one line per tick
+        # would take far longer than SCRUB_ANIMATION_MS in practice.
+        # Bundling caps the number of ticks regardless of window density.
+        frames = max(1, min(remaining, self.SCRUB_ANIMATION_MS // 50))
+
+        self._scrub_lines_per_frame = -(-remaining // frames)  # ceil division
+
+        interval = max(1, self.SCRUB_ANIMATION_MS // frames)
+
+        self.map_view.set_scrub_animating(True)
+
+        self.scrub_timer.start(interval)
+
+    def scrub_animation_step(self):
+
+        for _ in range(self._scrub_lines_per_frame):
+
+            if not self.replay.has_next() or self.replay.index > self._scrub_target_index:
+                break
+
+            self.process_sentence(self.replay.next_line())
+
+        self.replay_scrubber.setValue(min(self.replay.index, self._scrub_target_index))
+
+        self.raw_data.verticalScrollBar().setValue(self.raw_data.verticalScrollBar().maximum())
+
+        if not self.replay.has_next() or self.replay.index > self._scrub_target_index:
+            self.scrub_timer.stop()
+            self.finish_seek()
+
+    def finish_seek(self):
+
+        self.map_view.set_scrub_animating(False)
+
+        self.replay_scrubber.setValue(self.replay.index)
+
+        self.current_mode = "Stopped"
+
+        self.start_action.setEnabled(True)
+        self.pause_action.setEnabled(False)
+        self.stop_action.setEnabled(True)
+
+        self.update_target_tree()
+        self.update_status()
 
     def exit_replay(self):
 
@@ -1027,6 +1184,7 @@ class MainWindow(QMainWindow):
         self.faster_action.setEnabled(False)
         self.skip_to_end_action.setEnabled(False)
         self.exit_replay_action.setEnabled(False)
+        self.replay_scrubber.setEnabled(False)
 
         self.current_mode = "Stopped"
 
