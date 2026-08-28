@@ -1,3 +1,4 @@
+import time
 import serial
 from PySide6.QtCore import QThread, Signal
 
@@ -12,6 +13,19 @@ def parse_serial_format(format_string):
     stopbits = int(format_string[2])
 
     return bytesize, parity, stopbits
+
+
+def looks_like_nmea(line):
+
+    line = line.strip()
+
+    if not line or line[0] not in "$!":
+        return False
+
+    # Not a full checksum validation — just enough to distinguish "this is
+    # shaped like a NMEA/AIS sentence" from random noise, since a short test
+    # window isn't guaranteed to catch a full, uncut line anyway.
+    return "," in line and "*" in line
 
 
 class SerialReaderThread(QThread):
@@ -78,3 +92,80 @@ class SerialReaderThread(QThread):
         self._running = False
 
         self.wait(2000)
+
+
+class SerialTestThread(QThread):
+    """One-shot "does this port actually work" check for the Communications
+    dialog's Test button — opens the port, listens for a few seconds, and
+    reports back what it saw rather than committing to a full live session.
+    """
+
+    test_finished = Signal(dict)
+
+    DURATION_SECONDS = 3
+
+    def __init__(self, port, baud, serial_format, serial_factory=None):
+        super().__init__()
+
+        self.port = port
+        self.baud = baud
+        self.serial_format = serial_format
+
+        self.serial_factory = serial_factory or serial.Serial
+
+    def run(self):
+
+        bytesize, parity, stopbits = parse_serial_format(self.serial_format)
+
+        try:
+            connection = self.serial_factory(
+                self.port,
+                baudrate=self.baud,
+                bytesize=bytesize,
+                parity=parity,
+                stopbits=stopbits,
+                timeout=1
+            )
+
+        except Exception as e:
+            self.test_finished.emit({"success": False, "error": str(e)})
+            return
+
+        raw_bytes = bytearray()
+        deadline = time.monotonic() + self.DURATION_SECONDS
+
+        try:
+            while time.monotonic() < deadline:
+
+                # timeout=1 on the connection bounds each read, so this loop
+                # can't overrun the deadline by more than ~1s even if the
+                # port never sends anything.
+                chunk = connection.read(256)
+
+                if chunk:
+                    raw_bytes.extend(chunk)
+
+        except Exception as e:
+            connection.close()
+            self.test_finished.emit({"success": False, "error": str(e)})
+            return
+
+        connection.close()
+
+        # Printable ASCII + CR/LF/TAB is what real NMEA traffic looks like
+        # at the byte level — a low ratio here usually means a baud/parity
+        # mismatch rather than "no data", since a wrong baud still reads
+        # *something*, just garbled.
+        printable = sum(1 for b in raw_bytes if 32 <= b <= 126 or b in (9, 10, 13))
+        printable_ratio = (printable / len(raw_bytes)) if raw_bytes else 0.0
+
+        text = raw_bytes.decode("ascii", errors="replace")
+        found_nmea = any(looks_like_nmea(line) for line in text.splitlines())
+
+        self.test_finished.emit({
+            "success": True,
+            "error": None,
+            "byte_count": len(raw_bytes),
+            "printable_ratio": printable_ratio,
+            "found_nmea": found_nmea
+        })

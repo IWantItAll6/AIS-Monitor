@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
+    QHBoxLayout,
     QFormLayout,
     QLabel,
     QCheckBox,
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.port_combobox import PortComboBox
+from services.serial_reader import SerialTestThread
 
 # bytesize, parity, stopbits — pyserial's own vocabulary, matching how this
 # is written on the datasheet (e.g. "8E1"): 8 data bits, Even parity, 1 stop bit.
@@ -61,6 +63,17 @@ class CommunicationsDialog(QDialog):
         ais_form.addRow("AIS Port", self.ais_port)
         ais_form.addRow("AIS Baud", self.ais_baud)
 
+        self.ais_test_button = QPushButton("Test")
+        self.ais_test_status = QLabel("")
+
+        ais_test_row = QHBoxLayout()
+        ais_test_row.addWidget(self.ais_test_button)
+        ais_test_row.addWidget(self.ais_test_status, 1)
+
+        ais_form.addRow("", ais_test_row)
+
+        self.ais_test_button.clicked.connect(lambda: self.run_test("ais"))
+
         layout.addLayout(ais_form)
 
         layout.addSpacing(10)
@@ -91,6 +104,17 @@ class CommunicationsDialog(QDialog):
         gnss_form.addRow("Use Separate GNSS", self.use_separate_gnss)
         gnss_form.addRow("GNSS Port", self.gnss_port)
         gnss_form.addRow("GNSS Baud", self.gnss_baud)
+
+        self.gnss_test_button = QPushButton("Test")
+        self.gnss_test_status = QLabel("")
+
+        gnss_test_row = QHBoxLayout()
+        gnss_test_row.addWidget(self.gnss_test_button)
+        gnss_test_row.addWidget(self.gnss_test_status, 1)
+
+        gnss_form.addRow("", gnss_test_row)
+
+        self.gnss_test_button.clicked.connect(lambda: self.run_test("gnss"))
 
         layout.addLayout(gnss_form)
 
@@ -145,6 +169,7 @@ class CommunicationsDialog(QDialog):
         self.gnss_port.setEnabled(enabled)
         self.gnss_baud.setEnabled(enabled)
         self.gnss_serial_format.setEnabled(enabled)
+        self.gnss_test_button.setEnabled(enabled)
 
     def toggle_advanced(self):
 
@@ -157,6 +182,74 @@ class CommunicationsDialog(QDialog):
 
             self.advanced_toggle.setText("► Advanced")
             self.advanced_widget.hide()
+
+    def run_test(self, which):
+
+        if which == "ais":
+            port, baud, serial_format = self.ais_port, self.ais_baud, self.ais_serial_format
+            button, status = self.ais_test_button, self.ais_test_status
+
+        else:
+            port, baud, serial_format = self.gnss_port, self.gnss_baud, self.gnss_serial_format
+            button, status = self.gnss_test_button, self.gnss_test_status
+
+        port_name = port.currentText()
+
+        if not port_name:
+            status.setText("✗ No port selected")
+            return
+
+        button.setEnabled(False)
+        status.setText(f"Testing (listening up to {SerialTestThread.DURATION_SECONDS}s)…")
+
+        thread = SerialTestThread(port_name, baud.currentText(), serial_format.currentText())
+
+        # Kept on self (not a local var) so it isn't garbage-collected while
+        # still running — a QThread whose Python wrapper disappears mid-run
+        # is a real crash risk, not just a theoretical one.
+        if which == "ais":
+            self.ais_test_thread = thread
+        else:
+            self.gnss_test_thread = thread
+
+        thread.test_finished.connect(lambda result: self.on_test_finished(which, result))
+        thread.start()
+
+    def on_test_finished(self, which, result):
+
+        if which == "ais":
+            button, status = self.ais_test_button, self.ais_test_status
+        else:
+            button, status = self.gnss_test_button, self.gnss_test_status
+
+        button.setEnabled(True)
+
+        if not result["success"]:
+            status.setText(f"✗ Could not open port: {result['error']}")
+            return
+
+        byte_count = result["byte_count"]
+
+        if byte_count == 0:
+            status.setText(
+                f"✗ Port opened but no data received in "
+                f"{SerialTestThread.DURATION_SECONDS}s — check cable/power/port"
+            )
+
+        elif result["found_nmea"]:
+            status.setText(f"✓ Valid NMEA sentence seen ({byte_count} bytes) — looks good")
+
+        elif result["printable_ratio"] > 0.9:
+            status.setText(
+                f"✓ Received {byte_count} bytes of normal-looking characters "
+                "(no full sentence caught in this short a window, but that's expected sometimes)"
+            )
+
+        else:
+            status.setText(
+                f"⚠ Received {byte_count} bytes but they look garbled "
+                f"({result['printable_ratio']:.0%} printable) — check baud/parity"
+            )
 
     def load_settings(self):
         self.ais_port.setCurrentText(self.settings["ais_port"])
@@ -186,3 +279,17 @@ class CommunicationsDialog(QDialog):
         self.save_settings()
 
         super().accept()
+
+    def done(self, result):
+
+        # Covers OK, Cancel, and the window's X button alike (QDialog routes
+        # all three through here) — waits out a still-running test thread
+        # rather than letting its Python wrapper get garbage-collected while
+        # the QThread is active, the same "destroyed while running" crash
+        # class already hit once elsewhere in this app's serial handling.
+        for thread in (getattr(self, "ais_test_thread", None), getattr(self, "gnss_test_thread", None)):
+
+            if thread is not None and thread.isRunning():
+                thread.wait(SerialTestThread.DURATION_SECONDS * 1000 + 2000)
+
+        super().done(result)

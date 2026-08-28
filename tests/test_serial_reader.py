@@ -2,7 +2,7 @@ import time
 
 import serial
 
-from services.serial_reader import SerialReaderThread, parse_serial_format
+from services.serial_reader import SerialReaderThread, SerialTestThread, parse_serial_format, looks_like_nmea
 
 
 def test_parse_serial_format_covers_common_presets():
@@ -10,6 +10,15 @@ def test_parse_serial_format_covers_common_presets():
     assert parse_serial_format("8N1") == (8, serial.PARITY_NONE, 1)
     assert parse_serial_format("8E1") == (8, serial.PARITY_EVEN, 1)
     assert parse_serial_format("7O1") == (7, serial.PARITY_ODD, 1)
+
+
+def test_looks_like_nmea():
+
+    assert looks_like_nmea("$GPRMC,123456,A*6A")
+    assert looks_like_nmea("!AIVDM,1,1,,A,foo,0*3A")
+    assert not looks_like_nmea("random garbage")
+    assert not looks_like_nmea("$no checksum or comma")
+    assert not looks_like_nmea("")
 
 
 class FakeSerial:
@@ -80,3 +89,85 @@ def test_reader_thread_reports_connection_failure(qapp):
     thread.start()
 
     assert pump_until(qapp, lambda: len(errors) >= 1)
+
+
+class FakeReadSerial:
+    """Mimics enough of pyserial's read() interface to drive
+    SerialTestThread without a real or virtual port."""
+
+    def __init__(self, chunks):
+
+        self._chunks = list(chunks)
+
+    def read(self, size):
+
+        if self._chunks:
+            return self._chunks.pop(0)
+
+        return b""
+
+    def close(self):
+        pass
+
+
+def run_test_thread(qapp, monkeypatch, factory):
+
+    # Real DURATION_SECONDS (3s) would make every test slow — shrink it,
+    # restored automatically by monkeypatch after the test.
+    monkeypatch.setattr(SerialTestThread, "DURATION_SECONDS", 0.05)
+
+    results = []
+
+    thread = SerialTestThread("COM_FAKE", 9600, "8N1", serial_factory=factory)
+    thread.test_finished.connect(results.append)
+
+    thread.start()
+
+    assert pump_until(qapp, lambda: len(results) >= 1)
+
+    return results[0]
+
+
+def test_test_thread_reports_connection_failure(qapp, monkeypatch):
+
+    def failing_factory(*args, **kwargs):
+        raise RuntimeError("port not found")
+
+    result = run_test_thread(qapp, monkeypatch, failing_factory)
+
+    assert result["success"] is False
+    assert "port not found" in result["error"]
+
+
+def test_test_thread_detects_nmea_sentence(qapp, monkeypatch):
+
+    factory = lambda *a, **kw: FakeReadSerial([b"$GPRMC,test*00\r\n"])
+
+    result = run_test_thread(qapp, monkeypatch, factory)
+
+    assert result["success"] is True
+    assert result["byte_count"] > 0
+    assert result["found_nmea"] is True
+
+
+def test_test_thread_reports_no_data(qapp, monkeypatch):
+
+    factory = lambda *a, **kw: FakeReadSerial([])
+
+    result = run_test_thread(qapp, monkeypatch, factory)
+
+    assert result["success"] is True
+    assert result["byte_count"] == 0
+    assert result["found_nmea"] is False
+
+
+def test_test_thread_detects_garbled_data(qapp, monkeypatch):
+
+    factory = lambda *a, **kw: FakeReadSerial([bytes(range(20)) * 5])
+
+    result = run_test_thread(qapp, monkeypatch, factory)
+
+    assert result["success"] is True
+    assert result["byte_count"] > 0
+    assert result["found_nmea"] is False
+    assert result["printable_ratio"] < 0.9
