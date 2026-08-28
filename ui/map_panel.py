@@ -279,15 +279,15 @@ class MapPanel(QWidget):
 
         metrics = painter.fontMetrics()
 
-        visible = [v for v in self.vessels if v.get("lat") is not None and v.get("lon") is not None]
+        visible = [v for v in self.vessels if v.lat is not None and v.lon is not None]
 
         for vessel in visible:
 
-            track = vessel.get("track", [])
+            track = vessel.track
 
             if len(track) >= 2:
 
-                track_color = self.PINNED_TRACK_COLOR if vessel.get("pinned") else self.TRACK_COLOR
+                track_color = self.PINNED_TRACK_COLOR if vessel.pinned else self.TRACK_COLOR
                 painter.setPen(QPen(track_color, 2))
 
                 polyline = QPolygonF([self.project(t_lat, t_lon) for _, t_lat, t_lon in track])
@@ -296,26 +296,26 @@ class MapPanel(QWidget):
 
         # Closer vessels claim label space first — they're the ones actually
         # relevant to the operator, unlike distant AIS contacts.
-        visible.sort(key=lambda v: v.get("range", float("inf")))
+        visible.sort(key=lambda v: v.range if v.range is not None else float("inf"))
 
         placed_label_rects = []
 
         for vessel in visible:
 
-            point = self.project(vessel["lat"], vessel["lon"])
+            point = self.project(vessel.lat, vessel.lon)
 
             if not self.rect().contains(point.toPoint()):
                 continue
 
-            vessel_color = self.PINNED_VESSEL_COLOR if vessel.get("pinned") else self.VESSEL_COLOR
+            vessel_color = self.PINNED_VESSEL_COLOR if vessel.pinned else self.VESSEL_COLOR
             painter.setPen(QPen(vessel_color, 1))
             painter.setBrush(vessel_color)
 
             # True heading is more accurate than course-over-ground for which
             # way the bow points, but not every vessel reports it — fall back
             # to COG, and to a plain dot if neither is available.
-            heading = vessel.get("heading")
-            orientation = heading if heading is not None else vessel.get("cog")
+            heading = vessel.heading
+            orientation = heading if heading is not None else vessel.cog
 
             if orientation is None:
                 painter.drawEllipse(point, 4, 4)
@@ -327,7 +327,7 @@ class MapPanel(QWidget):
                 painter.drawPolygon(self.VESSEL_TRIANGLE)
                 painter.restore()
 
-            label_text = vessel.get("name") or str(vessel["mmsi"])
+            label_text = vessel.name or str(vessel.mmsi)
 
             # Anchor the label ahead of the vessel (in its direction of
             # travel) rather than a fixed screen offset — a fixed offset
@@ -439,7 +439,7 @@ class MapPanel(QWidget):
 
         for vessel in self.vessels:
 
-            lat, lon = vessel.get("lat"), vessel.get("lon")
+            lat, lon = vessel.lat, vessel.lon
 
             if lat is None or lon is None:
                 continue
@@ -450,7 +450,7 @@ class MapPanel(QWidget):
 
             if dist < closest_dist:
                 closest_dist = dist
-                closest_mmsi = vessel["mmsi"]
+                closest_mmsi = vessel.mmsi
 
         return closest_mmsi
 

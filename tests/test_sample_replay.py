@@ -45,7 +45,7 @@ def test_sample_replay_produces_expected_vessels(sample_result):
     # 3 fake vessels plus the synthetic own-ship AIVDO echo.
     assert len(window.registry.vessels) == 4
 
-    names = {v["name"] for v in window.registry.vessels.values() if v["name"]}
+    names = {v.name for v in window.registry.vessels.values() if v.name}
     assert names == {"SAMPLE VESSEL ONE", "SAMPLE VESSEL TWO", "SAMPLE TUG THREE"}
 
 
@@ -55,8 +55,8 @@ def test_sample_replay_extracts_callsign_and_type(sample_result):
 
     vessel = window.registry.get(999000001)
 
-    assert vessel["callsign"] == "ZZ1001"
-    assert vessel["type"] == "Cargo"
+    assert vessel.callsign == "ZZ1001"
+    assert vessel.type == "Cargo"
 
 
 def test_sample_replay_own_position_resolves(sample_result):
@@ -71,7 +71,7 @@ def test_sample_replay_attaches_rssi(sample_result):
 
     window, _ = sample_result
 
-    with_rssi = [v for v in window.registry.vessels.values() if v["rssi"] is not None]
+    with_rssi = [v for v in window.registry.vessels.values() if v.rssi is not None]
 
     assert len(with_rssi) >= 1
 

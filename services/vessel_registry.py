@@ -1,5 +1,5 @@
-from collections import deque
-from datetime import datetime
+from models.vessel import Vessel
+
 
 class VesselRegistry:
 
@@ -9,39 +9,7 @@ class VesselRegistry:
 
     def get_or_create(self, mmsi):
 
-        return self.vessels.setdefault(
-            mmsi,
-            {
-                "mmsi": mmsi,
-                "name": "",
-                "callsign": "",
-                "type": "",
-                "lat": None,
-                "lon": None,
-                "sog": None,
-                "cog": None,
-                "heading": None,
-                "rssi": None,
-                "last_seen": datetime.now(),
-
-                # deque, not list — trim_vessel_tracks() pops stale entries
-                # from the front on every update; O(1) per pop on a deque
-                # vs. O(n) on a list (which has to shift everything after).
-                "track": deque(),
-                "pinned": False,
-
-                # Captured for every vessel regardless of whether the UI
-                # currently shows them — see nav_status (shown) vs. the rest
-                # (stored for a possible future "choose extra fields" view).
-                "nav_status": None,
-                "rot": None,
-                "destination": "",
-                "draught": None,
-                "imo": None,
-                "length": None,
-                "beam": None
-            }
-        )
+        return self.vessels.setdefault(mmsi, Vessel(mmsi))
 
     def get(self, mmsi):
         return self.vessels.get(mmsi)

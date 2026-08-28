@@ -607,7 +607,7 @@ class MainWindow(QMainWindow):
             vessel = self.ais_parser.process(sentence, self.replay.current_time)
 
             if vessel:
-                self.last_ais_mmsi = vessel["mmsi"]
+                self.last_ais_mmsi = vessel.mmsi
 
                 self.update_target_tree()
 
@@ -634,7 +634,7 @@ class MainWindow(QMainWindow):
                 vessel = self.registry.get(self.last_ais_mmsi)
 
                 if vessel:
-                    vessel["rssi"] = psmt["rssi"]
+                    vessel.rssi = psmt["rssi"]
                     self.update_target_tree()
 
         elif sentence.startswith("$GP"):
@@ -679,7 +679,7 @@ class MainWindow(QMainWindow):
         if self.replay.current_time is None:
             return "-"
 
-        last_seen = vessel.get("last_seen")
+        last_seen = vessel.last_seen
 
         if last_seen is None:
             return "-"
@@ -730,20 +730,20 @@ class MainWindow(QMainWindow):
             range_text = ""
             bearing_text = ""
 
-            if self.own_position["fix"] and vessel["lat"] is not None and vessel["lon"] is not None:
+            if self.own_position["fix"] and vessel.lat is not None and vessel.lon is not None:
                 rng, brg = calculate_range_bearing(
-                    self.own_position["lat"], self.own_position["lon"], vessel["lat"], vessel["lon"]
+                    self.own_position["lat"], self.own_position["lon"], vessel.lat, vessel.lon
                 )
 
-                vessel["range"] = rng
-                vessel["bearing"] = brg
+                vessel.range = rng
+                vessel.bearing = brg
 
                 range_text = format_distance(rng, self.settings.get("distance_unit", "NM"))
                 bearing_text = f"{brg:.0f}°"
 
             seen_text = self.format_seen(vessel)
 
-            mmsi = vessel["mmsi"]
+            mmsi = vessel.mmsi
 
             if mmsi in self.tree_items:
                 item = self.tree_items[mmsi]
@@ -753,34 +753,34 @@ class MainWindow(QMainWindow):
                 self.target_tree.addTopLevelItem(item)
                 self.tree_items[mmsi] = item
 
-            item.setText(0, "★" if vessel.get("pinned") else "")
+            item.setText(0, "★" if vessel.pinned else "")
             item.setText(1, str(mmsi))
-            item.setText(2, vessel["name"])
+            item.setText(2, vessel.name)
             item.setText(3, range_text)
             item.setText(4, bearing_text)
-            item.setText(5, str(vessel["rssi"]) if vessel["rssi"] is not None else "")
+            item.setText(5, str(vessel.rssi) if vessel.rssi is not None else "")
             item.setText(6, seen_text)
 
             # Pinned sort (see VesselTreeItem.__lt__ — always floats to top)
-            item.setData(0, Qt.ItemDataRole.UserRole, vessel.get("pinned", False))
+            item.setData(0, Qt.ItemDataRole.UserRole, vessel.pinned)
 
             # MMSI sort
             item.setData(1, Qt.ItemDataRole.UserRole, mmsi)
 
             # Range sort
-            item.setData(3, Qt.ItemDataRole.UserRole, vessel.get("range", 999999))
+            item.setData(3, Qt.ItemDataRole.UserRole, vessel.range if vessel.range is not None else 999999)
 
             # Bearing sort
-            item.setData(4, Qt.ItemDataRole.UserRole, vessel.get("bearing", 999))
+            item.setData(4, Qt.ItemDataRole.UserRole, vessel.bearing if vessel.bearing is not None else 999)
 
             # RSSI sort
-            item.setData(5, Qt.ItemDataRole.UserRole, vessel.get("rssi", -999))
+            item.setData(5, Qt.ItemDataRole.UserRole, vessel.rssi if vessel.rssi is not None else -999)
 
             # Seen sort — only meaningful when replay supplies a time
             # reference; live mode has none (see format_seen for the same gate).
-            if self.replay.current_time is not None and vessel.get("last_seen") is not None:
+            if self.replay.current_time is not None and vessel.last_seen is not None:
 
-                age_seconds = (self.replay.current_time - vessel["last_seen"]).total_seconds()
+                age_seconds = (self.replay.current_time - vessel.last_seen).total_seconds()
 
                 item.setData(6, Qt.ItemDataRole.UserRole, age_seconds)
 
@@ -1002,22 +1002,6 @@ class MainWindow(QMainWindow):
             self.raw_data.hide()
             self.raw_filter_widget.hide()
 
-    def update_vessel_row(self, vessel):
-
-        mmsi = vessel["mmsi"]
-
-        if mmsi not in self.tree_items:
-            item = QTreeWidgetItem(["", str(mmsi), vessel["name"], "", "", "", ""])
-
-            self.target_tree.addTopLevelItem(item)
-
-            self.tree_items[mmsi] = item
-
-        item = self.tree_items[mmsi]
-
-        item.setText(1, str(mmsi))
-        item.setText(2, vessel["name"])
-
     def add_test_targets(self):
         vessels = [
             ("★", "235123456", "SEA RANGER", "1.2nm", "034°", "-107", "2s"),
@@ -1055,7 +1039,7 @@ class MainWindow(QMainWindow):
         vessel = self.registry.get(mmsi)
 
         if vessel:
-            vessel["pinned"] = not vessel.get("pinned", False)
+            vessel.pinned = not vessel.pinned
             self.update_target_tree()
 
     def on_vessel_double_clicked(self, item, column):
@@ -1067,8 +1051,8 @@ class MainWindow(QMainWindow):
 
         vessel = self.registry.get(int(mmsi_text))
 
-        if vessel and vessel.get("lat") is not None and vessel.get("lon") is not None:
-            self.map_view.set_center(vessel["lat"], vessel["lon"])
+        if vessel and vessel.lat is not None and vessel.lon is not None:
+            self.map_view.set_center(vessel.lat, vessel.lon)
 
     def on_map_vessel_clicked(self, mmsi):
 
@@ -1094,35 +1078,33 @@ class MainWindow(QMainWindow):
 
     def show_vessel_details(self, vessel):
 
-        self.detail_mmsi.setText(str(vessel.get("mmsi", "-")))
+        self.detail_mmsi.setText(str(vessel.mmsi))
 
-        self.detail_name.setText(vessel.get("name", "") or "-")
+        self.detail_name.setText(vessel.name or "-")
 
-        self.detail_lat.setText("-" if vessel.get("lat") is None else str(vessel["lat"]))
-        self.detail_lon.setText("-" if vessel.get("lon") is None else str(vessel["lon"]))
-        self.detail_sog.setText("-" if vessel.get("sog") is None else f"{vessel['sog']:.1f} kn")
-        self.detail_cog.setText("-" if vessel.get("cog") is None else f"{vessel['cog']:.0f}°")
+        self.detail_lat.setText("-" if vessel.lat is None else str(vessel.lat))
+        self.detail_lon.setText("-" if vessel.lon is None else str(vessel.lon))
+        self.detail_sog.setText("-" if vessel.sog is None else f"{vessel.sog:.1f} kn")
+        self.detail_cog.setText("-" if vessel.cog is None else f"{vessel.cog:.0f}°")
 
         self.detail_heading.setText(
-            "-" if vessel.get("heading") is None else f"{vessel['heading']}°"
+            "-" if vessel.heading is None else f"{vessel.heading}°"
         )
 
-        self.detail_nav_status.setText(vessel.get("nav_status") or "-")
+        self.detail_nav_status.setText(vessel.nav_status or "-")
 
-        rssi = vessel.get("rssi")
+        self.detail_rssi.setText("-" if vessel.rssi is None else str(vessel.rssi))
 
-        self.detail_rssi.setText("-" if rssi is None else str(rssi))
+        self.detail_callsign.setText(vessel.callsign or "-")
+        self.detail_type.setText(vessel.type or "-")
 
-        self.detail_callsign.setText(vessel.get("callsign") or "-")
-        self.detail_type.setText(vessel.get("type") or "-")
-
-        if "range" in vessel:
-            self.detail_range.setText(format_distance(vessel["range"], self.settings.get("distance_unit", "NM")))
+        if vessel.range is not None:
+            self.detail_range.setText(format_distance(vessel.range, self.settings.get("distance_unit", "NM")))
         else:
             self.detail_range.setText("-")
 
-        if "bearing" in vessel:
-            self.detail_bearing.setText(f"{vessel['bearing']:.0f}°")
+        if vessel.bearing is not None:
+            self.detail_bearing.setText(f"{vessel.bearing:.0f}°")
         else:
             self.detail_bearing.setText("-")
 
@@ -1135,7 +1117,7 @@ class MainWindow(QMainWindow):
         # fresh data, not stale readings from the previous session.
         for mmsi, vessel in list(self.registry.vessels.items()):
 
-            if vessel.get("pinned"):
+            if vessel.pinned:
                 self.reset_vessel_data(vessel)
 
             else:
@@ -1167,15 +1149,15 @@ class MainWindow(QMainWindow):
 
     def reset_vessel_data(self, vessel):
 
-        mmsi = vessel["mmsi"]
-        name = vessel["name"]
+        mmsi = vessel.mmsi
+        name = vessel.name
 
         del self.registry.vessels[mmsi]
 
         fresh = self.registry.get_or_create(mmsi)
 
-        fresh["name"] = name
-        fresh["pinned"] = True
+        fresh.name = name
+        fresh.pinned = True
 
     def check_vessel_timeouts(self):
 
@@ -1193,10 +1175,10 @@ class MainWindow(QMainWindow):
 
         for mmsi, vessel in self.registry.vessels.items():
 
-            if vessel.get("pinned"):
+            if vessel.pinned:
                 continue
 
-            age = (self.replay.current_time - vessel["last_seen"]).total_seconds()
+            age = (self.replay.current_time - vessel.last_seen).total_seconds()
 
             if age > timeout_seconds:
                 expired.append(mmsi)
@@ -1219,7 +1201,7 @@ class MainWindow(QMainWindow):
         track_seconds = int(track_length_setting) * 60
 
         for vessel in self.registry.vessels.values():
-            self.trim_track(vessel["track"], track_seconds)
+            self.trim_track(vessel.track, track_seconds)
 
     def trim_own_track(self):
 

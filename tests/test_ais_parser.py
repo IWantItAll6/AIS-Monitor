@@ -22,9 +22,9 @@ def test_sentinel_values_filtered_to_none(monkeypatch):
 
     vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
 
-    assert vessel["sog"] is None
-    assert vessel["cog"] is None
-    assert vessel["heading"] is None
+    assert vessel.sog is None
+    assert vessel.cog is None
+    assert vessel.heading is None
 
 
 def test_zero_mmsi_is_filtered(monkeypatch):
@@ -48,7 +48,7 @@ def test_live_mode_gets_a_real_timestamp_when_none_supplied(monkeypatch):
 
     vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
 
-    assert vessel["last_seen"] is not None
+    assert vessel.last_seen is not None
 
 
 def test_multipart_message_assembled_across_calls_real_sentences():
@@ -66,8 +66,8 @@ def test_multipart_message_assembled_across_calls_real_sentences():
     vessel = parser.process(fragment_2, None)
 
     assert vessel is not None
-    assert vessel["callsign"] == "MNLK4"
-    assert vessel["type"] == "PilotVessel"
+    assert vessel.callsign == "MNLK4"
+    assert vessel.type == "PilotVessel"
 
 
 def test_ship_type_falls_back_to_raw_code_when_not_an_enum_member(monkeypatch):
@@ -81,4 +81,4 @@ def test_ship_type_falls_back_to_raw_code_when_not_an_enum_member(monkeypatch):
 
     vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
 
-    assert vessel["type"] == "36"
+    assert vessel.type == "36"

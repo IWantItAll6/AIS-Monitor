@@ -52,8 +52,8 @@ def test_trim_vessel_tracks_does_nothing_without_a_replay_time_reference(qapp):
     assert window.replay.current_time is None
 
     vessel = window.registry.get_or_create(123)
-    vessel["track"] = deque([(datetime.now() - timedelta(hours=5), 1.0, 1.0)])
+    vessel.track = deque([(datetime.now() - timedelta(hours=5), 1.0, 1.0)])
 
     window.trim_vessel_tracks()
 
-    assert len(vessel["track"]) == 1
+    assert len(vessel.track) == 1

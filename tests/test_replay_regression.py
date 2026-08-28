@@ -99,8 +99,8 @@ def test_field_log_1_callsigns_and_ship_types_extracted(field_log_1_result):
 
     window, _ = field_log_1_result
 
-    with_callsign = [v for v in window.registry.vessels.values() if v["callsign"]]
-    with_type = [v for v in window.registry.vessels.values() if v["type"]]
+    with_callsign = [v for v in window.registry.vessels.values() if v.callsign]
+    with_type = [v for v in window.registry.vessels.values() if v.type]
 
     assert len(with_callsign) >= 10
     assert len(with_type) >= 10
@@ -110,7 +110,7 @@ def test_rssi_log_attaches_rssi_to_vessels(rssi_result):
 
     window, _ = rssi_result
 
-    with_rssi = [v for v in window.registry.vessels.values() if v["rssi"] is not None]
+    with_rssi = [v for v in window.registry.vessels.values() if v.rssi is not None]
 
     assert len(with_rssi) >= 1
 
