@@ -1,5 +1,5 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox
-from PyQt6.QtGui import QIcon
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox
+from PySide6.QtGui import QIcon
 
 HELP_HTML = """
 <h2>AIS Monitor — Help</h2>

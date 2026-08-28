@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QComboBox
+from PySide6.QtWidgets import QComboBox
 import serial.tools.list_ports
 
 

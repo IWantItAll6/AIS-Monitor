@@ -5,9 +5,9 @@ color palette (navy water, green land, orange vessel) so the icon reads as
 design; it overwrites assets/app_icon.png.
 """
 
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QPainter, QColor, QPixmap, QPolygonF, QPainterPath
-from PyQt6.QtCore import Qt, QPointF, QRectF
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QPainter, QColor, QPixmap, QPolygonF, QPainterPath
+from PySide6.QtCore import Qt, QPointF, QRectF
 
 SIZE = 256
 

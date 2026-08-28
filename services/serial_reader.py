@@ -1,5 +1,5 @@
 import serial
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 PARITY_CODES = {"N": serial.PARITY_NONE, "E": serial.PARITY_EVEN, "O": serial.PARITY_ODD}
 
@@ -16,8 +16,8 @@ def parse_serial_format(format_string):
 
 class SerialReaderThread(QThread):
 
-    line_received = pyqtSignal(str)
-    error_occurred = pyqtSignal(str)
+    line_received = Signal(str)
+    error_occurred = Signal(str)
 
     def __init__(self, port, baud, serial_format, serial_factory=None):
         super().__init__()

@@ -1,8 +1,8 @@
 from math import cos, sin, radians, log2, hypot
 
-from PyQt6.QtWidgets import QWidget
-from PyQt6.QtGui import QPainter, QColor, QPolygonF, QPen
-from PyQt6.QtCore import Qt, QPointF, QRect, pyqtSignal
+from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QPainter, QColor, QPolygonF, QPen
+from PySide6.QtCore import Qt, QPointF, QRect, Signal
 
 from services.coastline_service import CoastlineService
 from services.places_service import PlacesService
@@ -13,8 +13,8 @@ from services.geo import NM_PER_UNIT, UNIT_SUFFIX
 
 class MapPanel(QWidget):
 
-    vessel_clicked = pyqtSignal(int)
-    vessel_double_clicked = pyqtSignal(int)
+    vessel_clicked = Signal(int)
+    vessel_double_clicked = Signal(int)
 
     WATER_COLOR = QColor(20, 40, 60)
     LAND_COLOR = QColor(60, 90, 50)

@@ -1,7 +1,7 @@
 import ctypes
 import platform
 
-from PyQt6.QtGui import QPalette, QColor
+from PySide6.QtGui import QPalette, QColor
 
 
 def apply_theme(app, theme_name):

@@ -1,7 +1,7 @@
 import sys
 
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QIcon
 
 from ui.main_window import MainWindow
 

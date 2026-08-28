@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
     QVBoxLayout,
@@ -22,8 +22,8 @@ from PyQt6.QtWidgets import (
     QWidgetAction
 )
 
-from PyQt6.QtCore import Qt, QSize, QTimer
-from PyQt6.QtGui import QIcon
+from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtGui import QIcon
 import re
 from collections import deque
 from datetime import datetime
@@ -177,7 +177,7 @@ class MainWindow(QMainWindow):
         self.target_tree.setColumnWidth(5, 55)  # RSSI
         self.target_tree.setColumnWidth(6, 55)  # Seen
 
-        from PyQt6.QtWidgets import QHeaderView
+        from PySide6.QtWidgets import QHeaderView
 
         header = self.target_tree.header()
 

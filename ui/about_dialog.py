@@ -1,6 +1,6 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QDialogButtonBox
-from PyQt6.QtGui import QPixmap, QIcon
-from PyQt6.QtCore import Qt
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QDialogButtonBox
+from PySide6.QtGui import QPixmap, QIcon
+from PySide6.QtCore import Qt
 
 APP_VERSION = "0.1.0"
 APP_AUTHOR = "Iwan Croose"

@@ -1,5 +1,5 @@
 import pytest
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 
 
 @pytest.fixture(scope="session")
