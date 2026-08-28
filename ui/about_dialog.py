@@ -59,6 +59,17 @@ class AboutDialog(QDialog):
 
         layout.addSpacing(10)
 
+        credits = QLabel(
+            "Map data: Natural Earth (public domain).\n"
+            "UK place data: GeoNames (CC BY 4.0, https://www.geonames.org/)."
+        )
+        credits_font = credits.font()
+        credits_font.setPointSize(max(credits_font.pointSize() - 1, 7))
+        credits.setFont(credits_font)
+        layout.addWidget(credits)
+
+        layout.addSpacing(10)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         buttons.accepted.connect(self.accept)
 

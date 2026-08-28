@@ -14,7 +14,6 @@ SIZE = 256
 WATER_COLOR = QColor(20, 40, 60)
 LAND_COLOR = QColor(60, 90, 50)
 VESSEL_COLOR = QColor(255, 140, 0)
-RING_COLOR = QColor(120, 160, 180, 90)
 
 
 def generate():
@@ -32,26 +31,31 @@ def generate():
     painter.setBrush(WATER_COLOR)
     painter.drawRoundedRect(QRectF(0, 0, SIZE, SIZE), 48, 48)
 
-    # A corner of coastline, bottom-left — echoes the map view.
-    land = QPainterPath()
-    land.moveTo(0, SIZE * 0.62)
-    land.cubicTo(SIZE * 0.18, SIZE * 0.52, SIZE * 0.30, SIZE * 0.78, SIZE * 0.46, SIZE * 0.70)
-    land.cubicTo(SIZE * 0.30, SIZE * 0.90, SIZE * 0.15, SIZE * 0.95, 0, SIZE * 0.92)
-    land.closeSubpath()
-
+    # Two landmasses on opposite corners, mainland (bottom-left) and an
+    # island (top-right) — a Solent/Portsmouth-style channel between them,
+    # rather than a single coastline corner, so the vessel reads as
+    # threading through a strait instead of just floating near a shore.
     painter.setBrush(LAND_COLOR)
-    painter.drawPath(land)
 
-    # Radar-style rings behind the vessel, subtle.
-    painter.setPen(RING_COLOR)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    center = QPointF(SIZE * 0.58, SIZE * 0.42)
+    mainland = QPainterPath()
+    mainland.moveTo(0, SIZE * 0.55)
+    mainland.cubicTo(SIZE * 0.20, SIZE * 0.48, SIZE * 0.32, SIZE * 0.68, SIZE * 0.40, SIZE * 0.66)
+    mainland.cubicTo(SIZE * 0.28, SIZE * 0.88, SIZE * 0.14, SIZE * 0.97, 0, SIZE * 0.95)
+    mainland.closeSubpath()
 
-    for radius in (40, 65, 90):
-        painter.drawEllipse(center, radius, radius)
+    painter.drawPath(mainland)
+
+    island = QPainterPath()
+    island.moveTo(SIZE * 1.0, SIZE * 0.42)
+    island.cubicTo(SIZE * 0.86, SIZE * 0.30, SIZE * 0.70, SIZE * 0.34, SIZE * 0.64, SIZE * 0.22)
+    island.cubicTo(SIZE * 0.80, SIZE * 0.06, SIZE * 0.94, SIZE * 0.02, SIZE * 1.0, SIZE * 0.06)
+    island.closeSubpath()
+
+    painter.drawPath(island)
 
     # The vessel triangle itself — same shape used on the map, scaled up
-    # and narrowed so it reads as a ship heading somewhere, not a play button.
+    # and narrowed so it reads as a ship heading somewhere, not a play
+    # button — oriented up-channel (bottom-left to top-right).
     triangle = QPolygonF([
         QPointF(0, -50),
         QPointF(20, 42),
@@ -61,8 +65,8 @@ def generate():
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(VESSEL_COLOR)
     painter.save()
-    painter.translate(center)
-    painter.rotate(20)
+    painter.translate(SIZE * 0.42, SIZE * 0.58)
+    painter.rotate(45)
     painter.drawPolygon(triangle)
     painter.restore()
 

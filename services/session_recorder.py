@@ -40,3 +40,12 @@ class SessionRecorder:
     def is_recording(self):
 
         return self.file is not None
+
+    def directory_size_mb(self):
+
+        if not self.directory.exists():
+            return 0
+
+        total_bytes = sum(f.stat().st_size for f in self.directory.glob("*.log"))
+
+        return total_bytes / (1024 * 1024)

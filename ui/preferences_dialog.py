@@ -106,6 +106,31 @@ class PreferencesDialog(QDialog):
 
         layout.addSpacing(10)
 
+        #
+        # Recording
+        #
+
+        recording_title = QLabel("Recording")
+
+        font = recording_title.font()
+        font.setBold(True)
+
+        recording_title.setFont(font)
+
+        layout.addWidget(recording_title)
+
+        recording_form = QFormLayout()
+
+        self.recordings_warning_size = QComboBox()
+        self.recordings_warning_size.addItems(["100", "250", "500", "1000", "2000", "No warning"])
+        self.recordings_warning_size.setCurrentText("500")
+
+        recording_form.addRow("Warn When Recordings Folder Exceeds (MB)", self.recordings_warning_size)
+
+        layout.addLayout(recording_form)
+
+        layout.addSpacing(10)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -123,6 +148,8 @@ class PreferencesDialog(QDialog):
         self.vessel_timeout.setCurrentText(self.settings["vessel_timeout"])
         self.track_length.setCurrentText(self.settings["track_length"])
 
+        self.recordings_warning_size.setCurrentText(self.settings["recordings_warning_size_mb"])
+
     def save_settings(self):
         self.settings["theme"] = self.theme.currentText()
 
@@ -130,6 +157,8 @@ class PreferencesDialog(QDialog):
 
         self.settings["vessel_timeout"] = self.vessel_timeout.currentText()
         self.settings["track_length"] = self.track_length.currentText()
+
+        self.settings["recordings_warning_size_mb"] = self.recordings_warning_size.currentText()
 
     def accept(self):
         self.save_settings()

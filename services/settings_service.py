@@ -30,6 +30,10 @@ class SettingsService:
         "last_replay_folder": "",
         "show_stale_targets": False,
 
+        # Data retention itself is the user's call — we only flag when the
+        # recordings folder has grown large, never delete anything.
+        "recordings_warning_size_mb": "500",
+
         # RSSI off by default — it's only meaningful with the specific RX
         # analyser unit, not a general AIS receiver setup.
         "visible_columns": {

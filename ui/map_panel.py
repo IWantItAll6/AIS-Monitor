@@ -2,11 +2,12 @@ from math import cos, sin, radians, log2, hypot
 
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtGui import QPainter, QColor, QPolygonF, QPen
-from PyQt6.QtCore import Qt, QPointF, pyqtSignal
+from PyQt6.QtCore import Qt, QPointF, QRect, pyqtSignal
 
 from services.coastline_service import CoastlineService
 from services.places_service import PlacesService
 from services.uk_towns_service import UkTownsService
+from services.rivers_service import RiversService
 from services.geo import NM_PER_UNIT, UNIT_SUFFIX
 
 
@@ -17,6 +18,7 @@ class MapPanel(QWidget):
 
     WATER_COLOR = QColor(20, 40, 60)
     LAND_COLOR = QColor(60, 90, 50)
+    RIVER_COLOR = QColor(50, 90, 130)
     PLACE_COLOR = QColor(230, 220, 190)
     VESSEL_COLOR = QColor(255, 140, 0)
     TRACK_COLOR = QColor(255, 140, 0, 210)
@@ -40,11 +42,21 @@ class MapPanel(QWidget):
     # points the bow the right way.
     VESSEL_TRIANGLE = QPolygonF([QPointF(0, -6), QPointF(4, 5), QPointF(-4, 5)])
 
+    # Candidate label placements tried, in order, around each vessel marker
+    # before giving up and suppressing the label (widest angle spread first
+    # at the tightest radius, then step out to a wider radius).
+    LABEL_RADII = (14, 20, 26)
+    LABEL_ANGLE_OFFSETS = (0, 60, -60, 120, -120, 180)
+
+    # Half-width/height of the square obstacle a vessel marker occupies —
+    # labels must clear this even for vessels whose own label got suppressed.
+    MARKER_HALF_SIZE = 7
+
     DEFAULT_CENTER_LAT = 54.5
     DEFAULT_CENTER_LON = -3.0
     DEFAULT_PIXELS_PER_DEGREE = 45
 
-    def __init__(self, coastline_path, places_path, uk_towns_path):
+    def __init__(self, coastline_path, places_path, uk_towns_path, rivers_path):
         super().__init__()
 
         self.coastline = CoastlineService(coastline_path)
@@ -56,6 +68,9 @@ class MapPanel(QWidget):
         self.uk_towns = UkTownsService(uk_towns_path)
         self.uk_towns.load()
 
+        self.rivers = RiversService(rivers_path)
+        self.rivers.load()
+
         self.center_lat = self.DEFAULT_CENTER_LAT
         self.center_lon = self.DEFAULT_CENTER_LON
 
@@ -65,6 +80,12 @@ class MapPanel(QWidget):
         self.own_position = {"lat": None, "lon": None, "fix": False}
         self.own_track = []
         self.distance_unit = "NM"
+
+        # Last successful (radius, angle) per vessel MMSI — tried first each
+        # frame before searching fresh, so a label's screen position stays
+        # put across small pan/zoom changes instead of jumping between
+        # equally-valid candidate slots every repaint.
+        self.label_offsets = {}
 
         self._drag_start = None
         self._drag_origin = None
@@ -176,9 +197,36 @@ class MapPanel(QWidget):
 
             painter.drawPolygon(polygon)
 
+        self.draw_rivers(painter)
         self.draw_places(painter)
         self.draw_vessels(painter)
         self.draw_scale_bar(painter)
+
+    def draw_rivers(self, painter):
+
+        # Natural Earth's land polygon doesn't carve out every river channel
+        # at this scale — without this, a vessel on a wide river mouth or
+        # estuary can visually appear to be sitting on land.
+        zoom = self.current_zoom_level()
+
+        min_lon, max_lon, min_lat, max_lat = self.visible_bounds()
+
+        painter.setPen(QPen(self.RIVER_COLOR, 1.5))
+
+        for river in self.rivers.rivers:
+
+            if river["min_zoom"] > zoom:
+                continue
+
+            if (
+                river["max_lon"] < min_lon or river["min_lon"] > max_lon
+                or river["max_lat"] < min_lat or river["min_lat"] > max_lat
+            ):
+                continue
+
+            polyline = QPolygonF([self.project(lat, lon) for lon, lat in river["points"]])
+
+            painter.drawPolyline(polyline)
 
     def draw_scale_bar(self, painter):
 
@@ -298,7 +346,20 @@ class MapPanel(QWidget):
         # relevant to the operator, unlike distant AIS contacts.
         visible.sort(key=lambda v: v.range if v.range is not None else float("inf"))
 
+        # Every marker's footprint is an obstacle for labels — including a
+        # vessel whose own label ends up suppressed — so text never lands
+        # on top of a ship symbol, not just on top of other text.
         placed_label_rects = []
+
+        for vessel in visible:
+
+            point = self.project(vessel.lat, vessel.lon)
+
+            if self.rect().contains(point.toPoint()):
+                r = self.MARKER_HALF_SIZE
+                placed_label_rects.append(QRect(int(point.x() - r), int(point.y() - r), r * 2, r * 2))
+
+        new_label_offsets = {}
 
         for vessel in visible:
 
@@ -329,32 +390,47 @@ class MapPanel(QWidget):
 
             label_text = vessel.name or str(vessel.mmsi)
 
-            # Anchor the label ahead of the vessel (in its direction of
-            # travel) rather than a fixed screen offset — a fixed offset
-            # sits directly on top of the trailing track for any vessel
-            # heading roughly in that same fixed direction (e.g. west).
-            if orientation is None:
-                dx, dy = 6, 4
+            # Preferred label direction is ahead of the vessel's travel —
+            # a fixed offset sits directly on top of the trailing track for
+            # any vessel heading roughly in that same fixed direction.
+            preferred_angle = orientation if orientation is not None else 135
 
-            else:
-                dx = sin(radians(orientation)) * 14
-                dy = -cos(radians(orientation)) * 14
+            # When the preferred spot is already taken, try nudging the
+            # label around the marker (widening angle, then radius) instead
+            # of just suppressing it — lets close-together vessels each
+            # find a free slot. Only a genuinely packed cluster (more
+            # candidates than slots) still falls back to suppression.
+            # The vessel's last successful placement is tried first so its
+            # label doesn't jump between equally-valid slots on every
+            # repaint as the view pans/zooms.
+            sticky = self.label_offsets.get(vessel.mmsi)
+            candidates = ([sticky] if sticky is not None else []) + [
+                (radius, preferred_angle + angle_offset)
+                for radius in self.LABEL_RADII
+                for angle_offset in self.LABEL_ANGLE_OFFSETS
+            ]
 
-            if dx < 0:
-                label_pos = point + QPointF(dx - metrics.horizontalAdvance(label_text), dy)
+            for radius, angle in candidates:
 
-            else:
-                label_pos = point + QPointF(dx, dy)
+                dx = sin(radians(angle)) * radius
+                dy = -cos(radians(angle)) * radius
 
-            label_rect = metrics.boundingRect(label_text)
-            label_rect.moveBottomLeft(label_pos.toPoint())
+                if dx < 0:
+                    label_pos = point + QPointF(dx - metrics.horizontalAdvance(label_text), dy)
 
-            if any(label_rect.intersects(r) for r in placed_label_rects):
-                continue
+                else:
+                    label_pos = point + QPointF(dx, dy)
 
-            placed_label_rects.append(label_rect)
+                label_rect = metrics.boundingRect(label_text)
+                label_rect.moveBottomLeft(label_pos.toPoint())
 
-            painter.drawText(label_pos, label_text)
+                if not any(label_rect.intersects(r) for r in placed_label_rects):
+                    placed_label_rects.append(label_rect)
+                    new_label_offsets[vessel.mmsi] = (radius, angle)
+                    painter.drawText(label_pos, label_text)
+                    break
+
+        self.label_offsets = new_label_offsets
 
         if len(self.own_track) >= 2:
 

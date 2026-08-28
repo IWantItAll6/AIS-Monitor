@@ -67,6 +67,13 @@ class MainWindow(QMainWindow):
         self.serial_readers = []
         self.recorder = SessionRecorder()
 
+        # update_status() runs very frequently (every seen_timer tick and
+        # every AIS message via update_target_tree), so a plain timed
+        # showMessage() would be overwritten almost instantly — this text
+        # is folded into update_status()'s own message instead, and cleared
+        # by a timer, so it actually stays readable.
+        self.status_warning = None
+
         self.own_position = {
             "lat": None,
             "lon": None,
@@ -136,7 +143,8 @@ class MainWindow(QMainWindow):
         self.map_view = MapPanel(
             "data/naturalearth/ne_10m_land/ne_10m_land.shp",
             "data/naturalearth/ne_10m_populated_places/ne_10m_populated_places_simple.shp",
-            "data/geonames/gb_towns.json"
+            "data/geonames/gb_towns.json",
+            "data/naturalearth/ne_10m_rivers_lake_centerlines/ne_10m_rivers_lake_centerlines.shp"
         )
 
         self.map_view.set_distance_unit(self.settings["distance_unit"])
@@ -440,6 +448,7 @@ class MainWindow(QMainWindow):
     def start_live_serial(self):
 
         self.recorder.start()
+        self.warn_if_recordings_folder_large()
 
         self.serial_readers = [self.make_serial_reader("ais")]
 
@@ -448,6 +457,30 @@ class MainWindow(QMainWindow):
 
         for reader in self.serial_readers:
             reader.start()
+
+    def warn_if_recordings_folder_large(self):
+
+        threshold = self.settings["recordings_warning_size_mb"]
+
+        if threshold == "No warning":
+            return
+
+        size_mb = self.recorder.directory_size_mb()
+
+        if size_mb >= float(threshold):
+            self.status_warning = f"⚠ Recordings folder is {size_mb:.0f} MB"
+            self.update_status()
+
+            QTimer.singleShot(8000, self.clear_status_warning)
+
+            QMessageBox.warning(
+                self,
+                "Recordings Folder Large",
+                f"The recordings folder ({self.recorder.directory}) has grown to "
+                f"{size_mb:.0f} MB. Old recordings are never deleted automatically — "
+                "review and clean it up manually if needed, or raise/disable this "
+                "warning in Preferences."
+            )
 
     def make_serial_reader(self, prefix):
 
@@ -803,12 +836,23 @@ class MainWindow(QMainWindow):
 
         logging_status = self.recorder.path.name if self.recorder.is_recording else "Stopped"
 
-        self.status_bar.showMessage(
+        message = (
             f"Mode: {self.current_mode} | "
             f"GNSS: {gnss_status} | "
             f"Targets: {len(self.registry.vessels)} | "
             f"Logging: {logging_status}"
         )
+
+        if self.status_warning:
+            message += f" | {self.status_warning}"
+
+        self.status_bar.showMessage(message)
+
+    def clear_status_warning(self):
+
+        self.status_warning = None
+
+        self.update_status()
 
     def closeEvent(self, event):
 
