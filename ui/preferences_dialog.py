@@ -8,8 +8,10 @@ from PySide6.QtWidgets import (
     QPushButton,
     QComboBox,
     QDialogButtonBox,
-    QFileDialog
+    QFileDialog,
+    QColorDialog
 )
+from PySide6.QtGui import QColor
 
 
 class PreferencesDialog(QDialog):
@@ -51,6 +53,25 @@ class PreferencesDialog(QDialog):
         self.theme.addItems(["Dark", "Light"])
 
         appearance_form.addRow("Theme", self.theme)
+
+        self.vessel_color = "#FF8C00"
+        self.pinned_color = "#FFD700"
+
+        self.vessel_color_button = QPushButton()
+        self.vessel_color_button.clicked.connect(
+            lambda: self.pick_color("vessel_color", self.vessel_color_button)
+        )
+
+        self.pinned_color_button = QPushButton()
+        self.pinned_color_button.clicked.connect(
+            lambda: self.pick_color("pinned_color", self.pinned_color_button)
+        )
+
+        appearance_form.addRow("Vessel Color", self.vessel_color_button)
+        appearance_form.addRow(
+            "Pinned Vessel Color (also gets a ring, regardless of color)",
+            self.pinned_color_button
+        )
 
         layout.addLayout(appearance_form)
 
@@ -156,6 +177,21 @@ class PreferencesDialog(QDialog):
 
         layout.addWidget(buttons)
 
+    def set_swatch(self, button, hex_color):
+
+        button.setText(hex_color)
+        button.setStyleSheet(f"background-color: {hex_color}; color: black;")
+
+    def pick_color(self, attr_name, button):
+
+        current = QColor(getattr(self, attr_name))
+
+        color = QColorDialog.getColor(current, self, "Choose Color")
+
+        if color.isValid():
+            setattr(self, attr_name, color.name())
+            self.set_swatch(button, color.name())
+
     def browse_recordings_folder(self):
 
         start_dir = self.recordings_folder.text() or "data/recordings"
@@ -170,6 +206,12 @@ class PreferencesDialog(QDialog):
 
         self.distance_unit.setCurrentText(self.settings["distance_unit"])
 
+        self.vessel_color = self.settings["vessel_color"]
+        self.set_swatch(self.vessel_color_button, self.vessel_color)
+
+        self.pinned_color = self.settings["pinned_color"]
+        self.set_swatch(self.pinned_color_button, self.pinned_color)
+
         self.vessel_timeout.setCurrentText(self.settings["vessel_timeout"])
         self.track_length.setCurrentText(self.settings["track_length"])
 
@@ -180,6 +222,9 @@ class PreferencesDialog(QDialog):
         self.settings["theme"] = self.theme.currentText()
 
         self.settings["distance_unit"] = self.distance_unit.currentText()
+
+        self.settings["vessel_color"] = self.vessel_color
+        self.settings["pinned_color"] = self.pinned_color
 
         self.settings["vessel_timeout"] = self.vessel_timeout.currentText()
         self.settings["track_length"] = self.track_length.currentText()

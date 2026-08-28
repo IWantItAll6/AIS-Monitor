@@ -164,6 +164,8 @@ class MainWindow(QMainWindow):
         )
 
         self.map_view.set_distance_unit(self.settings["distance_unit"])
+        self.map_view.set_vessel_color(self.settings["vessel_color"])
+        self.map_view.set_pinned_color(self.settings["pinned_color"])
 
         map_layout.addWidget(self.map_view)
 
@@ -984,6 +986,8 @@ class MainWindow(QMainWindow):
             apply_theme(QApplication.instance(), self.settings["theme"])
             apply_title_bar_theme(self, self.settings["theme"])
             self.map_view.set_distance_unit(self.settings["distance_unit"])
+            self.map_view.set_vessel_color(self.settings["vessel_color"])
+            self.map_view.set_pinned_color(self.settings["pinned_color"])
             self.recorder.directory = Path(self.settings["recordings_folder"])
 
     def create_menu(self):

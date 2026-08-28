@@ -24,6 +24,13 @@ class SettingsService:
         # contexts — lowercase "nm" is ambiguous with nanometres in SI units.
         "distance_unit": "NM",
 
+        # Default orange/gold pair, matching MapPanel's old hardcoded
+        # colors. Pinned vessels also get a non-color ring around their
+        # marker (see MapPanel.PIN_RING_COLOR) so the distinction doesn't
+        # rely solely on these being visually distinct.
+        "vessel_color": "#FF8C00",
+        "pinned_color": "#FFD700",
+
         "vessel_timeout": "10",
         "track_length": "10",
 

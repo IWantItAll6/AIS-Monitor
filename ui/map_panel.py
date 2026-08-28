@@ -18,13 +18,23 @@ class MapPanel(QWidget):
     WATER_COLOR = QColor(20, 40, 60)
     LAND_COLOR = QColor(60, 90, 50)
     PLACE_COLOR = QColor(230, 220, 190)
-    VESSEL_COLOR = QColor(255, 140, 0)
-    TRACK_COLOR = QColor(255, 140, 0, 210)
-    PINNED_VESSEL_COLOR = QColor(255, 215, 0)
-    PINNED_TRACK_COLOR = QColor(255, 215, 0, 210)
+
+    # Defaults for the user-configurable vessel/pinned colors below — not
+    # used directly for drawing (self.vessel_color/self.pinned_color are).
+    DEFAULT_VESSEL_COLOR = "#FF8C00"
+    DEFAULT_PINNED_COLOR = "#FFD700"
+
     OWN_SHIP_COLOR = QColor(80, 200, 255)
     OWN_TRACK_COLOR = QColor(80, 200, 255, 210)
     SCALE_BAR_COLOR = QColor(255, 255, 255)
+
+    # Pinned vessels get a ring around their marker in addition to their
+    # own color — the default orange/gold pair sits close together for
+    # red-green color vision deficiency, so the distinction shouldn't rely
+    # on color alone (and a user could still pick two similar custom
+    # colors via Preferences).
+    PIN_RING_COLOR = QColor(255, 255, 255, 220)
+    PIN_RING_RADIUS = 9
 
     SCALE_STEPS_NM = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000]
 
@@ -84,6 +94,9 @@ class MapPanel(QWidget):
         self.distance_unit = "NM"
         self.scrub_animating = False
         self.empty_hint = False
+
+        self.vessel_color = QColor(self.DEFAULT_VESSEL_COLOR)
+        self.pinned_color = QColor(self.DEFAULT_PINNED_COLOR)
 
         # Last successful (radius, angle) per vessel MMSI — tried first each
         # frame before searching fresh, so a label's screen position stays
@@ -149,6 +162,18 @@ class MapPanel(QWidget):
     def set_distance_unit(self, unit):
 
         self.distance_unit = unit
+
+        self.update()
+
+    def set_vessel_color(self, hex_color):
+
+        self.vessel_color = QColor(hex_color)
+
+        self.update()
+
+    def set_pinned_color(self, hex_color):
+
+        self.pinned_color = QColor(hex_color)
 
         self.update()
 
@@ -442,7 +467,8 @@ class MapPanel(QWidget):
 
             if len(track) >= 2:
 
-                track_color = self.PINNED_TRACK_COLOR if vessel.pinned else self.TRACK_COLOR
+                track_color = QColor(self.pinned_color if vessel.pinned else self.vessel_color)
+                track_color.setAlpha(210)
                 painter.setPen(QPen(track_color, 2))
 
                 polyline = QPolygonF([self.project(t_lat, t_lon) for _, t_lat, t_lon in track])
@@ -475,7 +501,18 @@ class MapPanel(QWidget):
             if not self.rect().contains(point.toPoint()):
                 continue
 
-            vessel_color = self.PINNED_VESSEL_COLOR if vessel.pinned else self.VESSEL_COLOR
+            vessel_color = self.pinned_color if vessel.pinned else self.vessel_color
+
+            # A ring around the marker, independent of fill color, so a
+            # pinned vessel is still distinguishable from a normal one
+            # under red-green color vision deficiency (where the default
+            # orange/gold pair sit close together) regardless of what
+            # colors are actually configured.
+            if vessel.pinned:
+                painter.setPen(QPen(self.PIN_RING_COLOR, 2))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(point, self.PIN_RING_RADIUS, self.PIN_RING_RADIUS)
+
             painter.setPen(QPen(vessel_color, 1))
             painter.setBrush(vessel_color)
 
