@@ -4,9 +4,12 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 
 from ui.main_window import MainWindow
+from services import crash_handler
 
 
 def main():
+
+    crash_handler.install()
 
     if sys.platform == "win32":
         # Without an explicit AppUserModelID, Windows groups the taskbar
