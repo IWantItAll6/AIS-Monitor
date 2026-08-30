@@ -82,3 +82,64 @@ def test_ship_type_falls_back_to_raw_code_when_not_an_enum_member(monkeypatch):
     vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
 
     assert vessel.type == "36"
+
+
+def test_msg_type_4_classified_as_base_station(monkeypatch):
+
+    parser = make_parser()
+
+    fake_msg = SimpleNamespace(mmsi=2321654, msg_type=4, lat=50.6, lon=-2.5)
+    monkeypatch.setattr(ais_parser_module, "decode", lambda *a: fake_msg)
+
+    vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
+
+    assert vessel.station_type == "base_station"
+    assert vessel.type == "Base Station"
+
+
+def test_msg_type_21_classified_as_aton_with_name_and_virtual_flag(monkeypatch):
+
+    parser = make_parser()
+
+    fake_msg = SimpleNamespace(
+        mmsi=992351000, msg_type=21, lat=50.6, lon=-2.5,
+        name="APPROACH BUOY", aid_type=SimpleNamespace(name="STARBOARD_HAND_MARK"),
+        virtual_aid=True,
+    )
+    monkeypatch.setattr(ais_parser_module, "decode", lambda *a: fake_msg)
+
+    vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
+
+    assert vessel.station_type == "aton"
+    assert vessel.name == "APPROACH BUOY"
+    assert vessel.type == "STARBOARD HAND MARK"
+    assert vessel.virtual_aid is True
+
+
+def test_sart_mob_epirb_classified_by_mmsi_prefix(monkeypatch):
+
+    parser = make_parser()
+
+    for prefix, expected_type, expected_label in (
+        (970, "sart", "SART"), (972, "mob", "MOB"), (974, "epirb", "EPIRB"),
+    ):
+
+        fake_msg = SimpleNamespace(mmsi=int(f"{prefix}123456"), msg_type=1)
+        monkeypatch.setattr(ais_parser_module, "decode", lambda *a: fake_msg)
+
+        vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
+
+        assert vessel.station_type == expected_type
+        assert vessel.type == expected_label
+
+
+def test_ordinary_vessel_mmsi_not_misclassified(monkeypatch):
+
+    parser = make_parser()
+
+    fake_msg = SimpleNamespace(mmsi=235123456, msg_type=1)
+    monkeypatch.setattr(ais_parser_module, "decode", lambda *a: fake_msg)
+
+    vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
+
+    assert vessel.station_type == "vessel"

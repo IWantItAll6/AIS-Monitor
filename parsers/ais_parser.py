@@ -14,6 +14,37 @@ def enum_label(value):
     return value.name.replace("_", " ") if hasattr(value, "name") else str(value)
 
 
+# SART/MOB/EPIRB beacons transmit ordinary Class A position reports (msg
+# types 1-3) — there's no dedicated message type for them, so they're only
+# identifiable by these reserved MMSI prefixes.
+MMSI_PREFIX_STATION_TYPES = {
+    "970": "sart",
+    "972": "mob",
+    "974": "epirb",
+}
+
+STATION_TYPE_LABELS = {
+    "base_station": "Base Station",
+    "sart": "SART",
+    "mob": "MOB",
+    "epirb": "EPIRB",
+}
+
+
+def classify_station(mmsi, msg_type):
+    """Base stations and Aids to Navigation declare their category via
+    msg_type (4 and 21 respectively); everything else is either a normal
+    vessel or a safety beacon identifiable only by MMSI prefix."""
+
+    if msg_type == 4:
+        return "base_station"
+
+    if msg_type == 21:
+        return "aton"
+
+    return MMSI_PREFIX_STATION_TYPES.get(str(mmsi)[:3], "vessel")
+
+
 class AISParser:
 
     def __init__(self, registry):
@@ -79,6 +110,22 @@ class AISParser:
 
             vessel.mmsi = mmsi
             vessel.last_seen = current_time
+
+            vessel.station_type = classify_station(mmsi, getattr(msg, "msg_type", None))
+
+            if vessel.station_type == "aton":
+
+                # Type 21 carries the AtoN's name directly (no shipname
+                # field the way Class A/B static reports do), and its own
+                # aid-type/virtual flag in place of a ship_type.
+                if hasattr(msg, "name") and msg.name:
+                    vessel.name = msg.name
+
+                vessel.type = enum_label(getattr(msg, "aid_type", None)) or "Aid to Navigation"
+                vessel.virtual_aid = bool(getattr(msg, "virtual_aid", False))
+
+            elif vessel.station_type in STATION_TYPE_LABELS:
+                vessel.type = STATION_TYPE_LABELS[vessel.station_type]
 
             if hasattr(msg, "lat") and hasattr(msg, "lon"):
                 vessel.lat = msg.lat

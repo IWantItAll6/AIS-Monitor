@@ -2,7 +2,7 @@ from math import cos, sin, radians, log2, hypot
 
 from PySide6.QtWidgets import QWidget, QPushButton
 from PySide6.QtGui import QPainter, QColor, QPolygonF, QPen
-from PySide6.QtCore import Qt, QPointF, QRect, Signal
+from PySide6.QtCore import Qt, QPointF, QRect, QRectF, Signal
 
 from services.coastline_service import CoastlineService
 from services.places_service import PlacesService
@@ -49,6 +49,16 @@ class MapPanel(QWidget):
     # matching compass bearings, so rotating by heading/COG degrees directly
     # points the bow the right way.
     VESSEL_TRIANGLE = QPolygonF([QPointF(0, -6), QPointF(4, 5), QPointF(-4, 5)])
+
+    # Non-vessel AIS station markers — shape-coded (not just color-coded) so
+    # they stay distinguishable under color vision deficiency and read at a
+    # glance as "not a ship": a square for a fixed base station, a diamond
+    # for an Aid to Navigation (the IALA convention), and a cross-in-circle
+    # distress mark shared by SART/MOB/EPIRB safety beacons.
+    BASE_STATION_HALF_SIZE = 5
+    ATON_HALF_SIZE = 6
+    SAFETY_MARK_RADIUS = 6
+    SAFETY_MARK_COLOR = QColor(255, 60, 60)
 
     # Candidate label placements tried, in order, around each vessel marker
     # before giving up and suppressing the label (widest angle spread first
@@ -513,24 +523,63 @@ class MapPanel(QWidget):
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawEllipse(point, self.PIN_RING_RADIUS, self.PIN_RING_RADIUS)
 
-            painter.setPen(QPen(vessel_color, 1))
-            painter.setBrush(vessel_color)
-
             # True heading is more accurate than course-over-ground for which
             # way the bow points, but not every vessel reports it — fall back
-            # to COG, and to a plain dot if neither is available.
+            # to COG, and to a plain dot if neither is available. Only
+            # meaningful for actual vessels — base stations, AtoNs, and
+            # safety beacons are stationary (or their "heading" is noise).
             heading = vessel.heading
             orientation = heading if heading is not None else vessel.cog
 
-            if orientation is None:
-                painter.drawEllipse(point, 4, 4)
+            if vessel.station_type == "base_station":
+                painter.setPen(QPen(vessel_color, 1))
+                painter.setBrush(vessel_color)
+                half = self.BASE_STATION_HALF_SIZE
+                painter.drawRect(QRectF(point.x() - half, point.y() - half, half * 2, half * 2))
+
+            elif vessel.station_type == "aton":
+                half = self.ATON_HALF_SIZE
+                diamond = QPolygonF([
+                    point + QPointF(0, -half), point + QPointF(half, 0),
+                    point + QPointF(0, half), point + QPointF(-half, 0),
+                ])
+
+                # A virtual AtoN marks a position with no physical structure
+                # there — drawn hollow so it reads differently from a real,
+                # physical mark even at a glance.
+                if vessel.virtual_aid:
+                    painter.setPen(QPen(vessel_color, 2))
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                else:
+                    painter.setPen(QPen(vessel_color, 1))
+                    painter.setBrush(vessel_color)
+
+                painter.drawPolygon(diamond)
+
+            elif vessel.station_type in ("sart", "mob", "epirb"):
+                # A distress-alarm cross-in-circle, in a fixed high-visibility
+                # color rather than the configurable vessel colors — these are
+                # safety-critical and should stand out regardless of theme.
+                painter.setPen(QPen(self.SAFETY_MARK_COLOR, 2))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                r = self.SAFETY_MARK_RADIUS
+                painter.drawEllipse(point, r, r)
+                painter.drawLine(point + QPointF(-r, 0), point + QPointF(r, 0))
+                painter.drawLine(point + QPointF(0, -r), point + QPointF(0, r))
 
             else:
-                painter.save()
-                painter.translate(point)
-                painter.rotate(orientation)
-                painter.drawPolygon(self.VESSEL_TRIANGLE)
-                painter.restore()
+                painter.setPen(QPen(vessel_color, 1))
+                painter.setBrush(vessel_color)
+
+                if orientation is None:
+                    painter.drawEllipse(point, 4, 4)
+
+                else:
+                    painter.save()
+                    painter.translate(point)
+                    painter.rotate(orientation)
+                    painter.drawPolygon(self.VESSEL_TRIANGLE)
+                    painter.restore()
 
             label_text = vessel.name or str(vessel.mmsi)
 

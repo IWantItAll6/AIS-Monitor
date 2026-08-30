@@ -11,6 +11,14 @@ class Vessel:
     callsign: str = ""
     type: str = ""
 
+    # "vessel" (the default — a normal AIS Class A/B ship) vs. the other
+    # station kinds AIS also carries on the same channel: "base_station"
+    # (msg type 4), "aton" (msg type 21, an Aid to Navigation), or a
+    # SART/MOB/EPIRB safety beacon (identified by reserved MMSI prefix,
+    # since those transmit ordinary Class A position reports).
+    station_type: str = "vessel"
+    virtual_aid: bool = False
+
     lat: float | None = None
     lon: float | None = None
 

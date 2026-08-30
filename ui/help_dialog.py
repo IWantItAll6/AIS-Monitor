@@ -52,6 +52,12 @@ ground, if heading isn't reported) when known, or a plain dot otherwise.
 A trailing line shows each vessel's recent track — how far back it goes is
 set by <b>Preferences &gt; Track Length</b>.
 </p>
+<p>
+Other AIS station types use their own marker shape rather than the vessel
+triangle: a <b>square</b> is a base station, a <b>diamond</b> is an Aid to
+Navigation (hollow for a virtual AtoN with no physical structure), and a
+<b>circle with a cross</b> is a SART, MOB, or EPIRB distress beacon.
+</p>
 
 <h3>Raw Data</h3>
 <p>
