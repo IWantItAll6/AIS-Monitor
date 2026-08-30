@@ -16,7 +16,12 @@ SIZE = 256
 WATER_COLOR = QColor(20, 40, 60)
 LAND_COLOR = QColor(60, 90, 50)
 VESSEL_COLOR = QColor(255, 140, 0)
-ATON_COLOR = QColor(235, 235, 235)
+
+# MapPanel draws a real AtoN in the same (configurable) vessel color as a
+# ship, distinguished by shape alone — matching that here, rather than
+# picking a color of its own, keeps the icon truthful to what the app
+# actually renders.
+ATON_COLOR = VESSEL_COLOR
 
 
 def jagged_curve_points(p0, control, p1, segments=14, jitter=7, seed=0):
