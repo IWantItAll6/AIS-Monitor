@@ -16,6 +16,7 @@ SIZE = 256
 WATER_COLOR = QColor(20, 40, 60)
 LAND_COLOR = QColor(60, 90, 50)
 VESSEL_COLOR = QColor(255, 140, 0)
+ATON_COLOR = QColor(235, 235, 235)
 
 
 def jagged_curve_points(p0, control, p1, segments=14, jitter=7, seed=0):
@@ -137,6 +138,21 @@ def generate():
     painter.rotate(45)
     painter.drawPolygon(triangle)
     painter.restore()
+
+    # A small Aid to Navigation marking the mouth's entrance — the same
+    # diamond shape MapPanel draws for a real AtoN, out in the open water
+    # the vessel is heading toward, tying the icon to a marker the app
+    # actually renders rather than being purely decorative.
+    aton_half = 12
+    aton_center = QPointF(SIZE * 0.74, SIZE * 0.24)
+    aton_diamond = QPolygonF([
+        aton_center + QPointF(0, -aton_half), aton_center + QPointF(aton_half, 0),
+        aton_center + QPointF(0, aton_half), aton_center + QPointF(-aton_half, 0),
+    ])
+
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(ATON_COLOR)
+    painter.drawPolygon(aton_diamond)
 
     painter.end()
 

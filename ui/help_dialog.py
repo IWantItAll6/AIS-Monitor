@@ -1,5 +1,144 @@
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QPolygonF, QPen, QTextDocument
+from PySide6.QtCore import Qt, QPointF, QRectF, QUrl
+
+from ui.map_panel import MapPanel
+
+# Each entry pairs a marker "kind" (drawn by _draw_legend_icon, mirroring
+# MapPanel.draw_vessels' shapes) with the label shown next to it in the
+# Help dialog's marker legend image.
+LEGEND_ENTRIES = [
+    ("own_ship", "Own position (GNSS fix)"),
+    ("vessel_heading", "Vessel — heading/COG known"),
+    ("vessel_no_heading", "Vessel — heading/COG unknown"),
+    ("pinned", "Pinned vessel"),
+    ("base_station", "Base station"),
+    ("aton", "Aid to Navigation"),
+    ("aton_virtual", "Aid to Navigation — virtual"),
+    ("safety", "SART / MOB / EPIRB beacon"),
+]
+
+_LEGEND_COLUMNS = 2
+_LEGEND_CELL_WIDTH = 220
+_LEGEND_CELL_HEIGHT = 32
+_LEGEND_ICON_X = 16
+_LEGEND_TEXT_COLOR = QColor(225, 225, 225)
+
+
+def _draw_legend_icon(painter, kind, center):
+    """Mirrors MapPanel.draw_vessels' per-category shapes and colors, minus
+    the heading rotation and label-placement logic that only make sense for
+    a live, moving marker rather than a static legend entry."""
+
+    vessel_color = QColor(MapPanel.DEFAULT_VESSEL_COLOR)
+    pinned_color = QColor(MapPanel.DEFAULT_PINNED_COLOR)
+
+    if kind in ("own_ship", "vessel_heading", "pinned"):
+
+        color = {
+            "own_ship": MapPanel.OWN_SHIP_COLOR,
+            "vessel_heading": vessel_color,
+            "pinned": pinned_color,
+        }[kind]
+
+        if kind == "pinned":
+            painter.setPen(QPen(MapPanel.PIN_RING_COLOR, 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(center, MapPanel.PIN_RING_RADIUS, MapPanel.PIN_RING_RADIUS)
+
+        painter.setPen(QPen(color, 1))
+        painter.setBrush(color)
+        painter.save()
+        painter.translate(center)
+        painter.drawPolygon(MapPanel.VESSEL_TRIANGLE)
+        painter.restore()
+
+    elif kind == "vessel_no_heading":
+        painter.setPen(QPen(vessel_color, 1))
+        painter.setBrush(vessel_color)
+        painter.drawEllipse(center, 4, 4)
+
+    elif kind == "base_station":
+        painter.setPen(QPen(vessel_color, 1))
+        painter.setBrush(vessel_color)
+        half = MapPanel.BASE_STATION_HALF_SIZE
+        painter.drawRect(QRectF(center.x() - half, center.y() - half, half * 2, half * 2))
+
+    elif kind in ("aton", "aton_virtual"):
+        half = MapPanel.ATON_HALF_SIZE
+        diamond = QPolygonF([
+            center + QPointF(0, -half), center + QPointF(half, 0),
+            center + QPointF(0, half), center + QPointF(-half, 0),
+        ])
+
+        if kind == "aton_virtual":
+            painter.setPen(QPen(vessel_color, 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+        else:
+            painter.setPen(QPen(vessel_color, 1))
+            painter.setBrush(vessel_color)
+
+        painter.drawPolygon(diamond)
+
+    elif kind == "safety":
+        painter.setPen(QPen(MapPanel.SAFETY_MARK_COLOR, 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        r = MapPanel.SAFETY_MARK_RADIUS
+        painter.drawEllipse(center, r, r)
+        painter.drawLine(center + QPointF(-r, 0), center + QPointF(r, 0))
+        painter.drawLine(center + QPointF(0, -r), center + QPointF(0, r))
+
+
+def build_marker_legend_pixmap():
+    """A reference image for the Help dialog showing every map marker shape
+    side by side with a label. Generated from MapPanel's own shape/color
+    constants rather than a separate hand-drawn asset, so it can't silently
+    drift out of sync with what the map actually draws.
+    """
+
+    rows = -(-len(LEGEND_ENTRIES) // _LEGEND_COLUMNS)  # ceil division
+
+    width = _LEGEND_CELL_WIDTH * _LEGEND_COLUMNS
+    height = _LEGEND_CELL_HEIGHT * rows
+
+    pixmap = QPixmap(width, height)
+
+    # Markers are only ever actually seen against the map's water color —
+    # not the app's light/dark UI theme — so the legend reproduces that
+    # background rather than adapting to the current theme. In particular,
+    # the white pin ring would be invisible against a light background.
+    pixmap.fill(MapPanel.WATER_COLOR)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    font = painter.font()
+    font.setPointSize(9)
+    painter.setFont(font)
+
+    metrics = painter.fontMetrics()
+
+    for i, (kind, label) in enumerate(LEGEND_ENTRIES):
+
+        col = i % _LEGEND_COLUMNS
+        row = i // _LEGEND_COLUMNS
+
+        cell_x = col * _LEGEND_CELL_WIDTH
+        cell_y = row * _LEGEND_CELL_HEIGHT
+
+        center = QPointF(cell_x + _LEGEND_ICON_X, cell_y + _LEGEND_CELL_HEIGHT / 2)
+
+        _draw_legend_icon(painter, kind, center)
+
+        painter.setPen(_LEGEND_TEXT_COLOR)
+        painter.drawText(
+            QPointF(cell_x + _LEGEND_ICON_X + 20, center.y() + metrics.ascent() / 2 - 1),
+            label
+        )
+
+    painter.end()
+
+    return pixmap
 
 HELP_HTML = """
 <h2>AIS Monitor — Help</h2>
@@ -64,6 +203,7 @@ triangle: a <b>square</b> is a base station, a <b>diamond</b> is an Aid to
 Navigation (hollow for a virtual AtoN with no physical structure), and a
 <b>circle with a cross</b> is a SART, MOB, or EPIRB distress beacon.
 </p>
+<p><img src="legend://markers"></p>
 
 <h3>Raw Data</h3>
 <p>
@@ -135,6 +275,15 @@ class HelpDialog(QDialog):
 
         text = QTextEdit()
         text.setReadOnly(True)
+
+        # Registered before setHtml() so the <img src="legend://markers">
+        # reference in HELP_HTML already resolves when the document parses.
+        text.document().addResource(
+            QTextDocument.ResourceType.ImageResource,
+            QUrl("legend://markers"),
+            build_marker_legend_pixmap()
+        )
+
         text.setHtml(HELP_HTML)
 
         layout.addWidget(text)
