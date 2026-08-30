@@ -60,6 +60,8 @@ class ReplayService:
 
     def interval_ms(self, base_interval_ms):
 
+        # A 0ms QTimer interval fires as fast as the event loop allows
+        # rather than "instantly" — floor it at 1ms regardless of speed.
         return max(1, int(base_interval_ms / self.speed))
 
     def progress(self):
@@ -71,6 +73,8 @@ class ReplayService:
 
     def extract_timestamp(self, line):
 
+        # Matches the "[YYYY-MM-DD HH:MM:SS.ffffff] sentence" format every
+        # recorded line is written in (see MainWindow.on_live_line_received).
         match = re.match(r"^\[(.*?)\]", line)
 
         if not match:

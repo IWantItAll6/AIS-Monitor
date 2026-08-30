@@ -11,6 +11,10 @@ MIN_SPAN_TO_SPLIT = 30
 TILE_SIZE_DEGREES = 10
 
 
+# Sutherland-Hodgman polygon clipping: clip_polygon() below runs this once
+# per edge of an axis-aligned tile box, each time keeping only the portion
+# of the ring on the "inside" side of that edge and cutting new vertices in
+# at the boundary crossings.
 def _clip_against(points, inside, intersect):
 
     if not points:
@@ -63,6 +67,12 @@ class CoastlineService:
 
         self.rings = []
 
+        # Parsing the full-resolution shapefile and re-tiling every large
+        # landmass is slow enough to notice on every app launch — cache the
+        # tiled result and only redo it when the shapefile itself changes.
+        # tile_size/min_span_to_split are baked into the filename since a
+        # cache built with different tiling parameters isn't valid for a
+        # different combination of them.
         self.cache_path = f"{shapefile_path}.tiled_{min_span_to_split}_{tile_size}.cache.json"
 
     def load(self):
@@ -97,6 +107,8 @@ class CoastlineService:
         if not os.path.exists(self.cache_path):
             return False
 
+        # A cache older than the source shapefile is stale (e.g. the data
+        # file was replaced) — fall through to rebuilding it.
         if os.path.getmtime(self.cache_path) < os.path.getmtime(self.shapefile_path):
             return False
 
@@ -147,6 +159,9 @@ class CoastlineService:
 
         tile = self.tile_size
 
+        # Snap the starting corner to the tile grid (rather than starting
+        # exactly at the ring's bounding box) so tile edges land at the same
+        # coordinates across different rings/shapefiles.
         lon = int(min_lon // tile) * tile
 
         while lon < max_lon:

@@ -25,6 +25,8 @@ def format_distance(distance_nm, unit):
 
 def calculate_range_bearing(lat1, lon1, lat2, lon2):
 
+    # Mean Earth radius in meters — good enough for the distances/precision
+    # this app deals with; not worth the complexity of an ellipsoidal model.
     r = 6371000
 
     lat1r = radians(lat1)
@@ -36,6 +38,7 @@ def calculate_range_bearing(lat1, lon1, lat2, lon2):
     dlat = lat2r - lat1r
     dlon = lon2r - lon1r
 
+    # Haversine great-circle distance.
     a = sin(dlat / 2) ** 2 + cos(lat1r) * cos(lat2r) * sin(dlon / 2) ** 2
 
     c = 2 * atan2(sqrt(a), sqrt(1 - a))
@@ -43,6 +46,9 @@ def calculate_range_bearing(lat1, lon1, lat2, lon2):
     distance_m = r * c
     distance_nm = distance_m / 1852
 
+    # Initial (forward) bearing from point 1 to point 2 — not constant along
+    # the great-circle path, but that's fine since this is only used for a
+    # single range/bearing readout, not a route.
     y = sin(dlon) * cos(lat2r)
     x = cos(lat1r) * sin(lat2r) - sin(lat1r) * cos(lat2r) * cos(dlon)
 

@@ -2,6 +2,11 @@ import pynmea2
 
 
 class GNSSParser:
+    """Accumulates state across sentences rather than returning a fresh
+    reading per call — a GNSS receiver splits position and course across
+    different sentence types (e.g. GGA for lat/lon, VTG for course), so
+    self.position holds the latest known value of each field independently.
+    """
 
     def __init__(self):
 
@@ -20,6 +25,11 @@ class GNSSParser:
 
             if hasattr(msg, "latitude") and hasattr(msg, "longitude"):
 
+                # Truthy check rather than "is not None": pynmea2 leaves
+                # these as 0.0/"" when a sentence field is empty, not None.
+                # Trade-off: a genuine fix exactly on the equator or prime
+                # meridian would also be skipped here, but that's an
+                # acceptable edge case for this app's use.
                 if msg.latitude and msg.longitude:
 
                     self.position["lat"] = msg.latitude

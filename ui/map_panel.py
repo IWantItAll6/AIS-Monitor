@@ -228,11 +228,17 @@ class MapPanel(QWidget):
         lat_span = max(max_lat - min_lat, 1)
         lon_span = max(max_lon - min_lon, 1)
 
+        # An assumed viewport size rather than the widget's actual current
+        # size — this runs once at startup before the window has necessarily
+        # settled into its final geometry. Only the ratio between the lat
+        # and lon scales below matters, not this value's absolute size.
         view_size = 800
 
         scale_lat = view_size / lat_span
         scale_lon = view_size / (lon_span * cos(radians(self.center_lat)))
 
+        # Whichever axis is more constraining wins, so the full extent fits
+        # without cropping either dimension.
         self.pixels_per_degree = min(scale_lat, scale_lon)
 
     def set_center(self, lat, lon):
@@ -244,6 +250,11 @@ class MapPanel(QWidget):
 
     def project(self, lat, lon):
 
+        # Equirectangular projection, scaled by cos(center latitude) so a
+        # degree of longitude shrinks to its correct on-screen width as you
+        # move away from the equator. It's only locally accurate around
+        # center_lat, not a true Mercator — fine for this app's zoom ranges,
+        # not for wide-area or near-polar viewing.
         x = (
             self.width() / 2
             + (lon - self.center_lon) * self.pixels_per_degree * cos(radians(self.center_lat))
@@ -255,6 +266,11 @@ class MapPanel(QWidget):
 
     def current_zoom_level(self):
 
+        # Expressed on the same 0-20ish scale as web map tile zoom levels
+        # (360 degrees of longitude wrapping the world, 256px being the
+        # standard web-map tile size) purely so the zoom-dependent place
+        # thresholds in PlacesService/UkTownsService read like familiar map
+        # zoom numbers — this app has no actual tiles.
         return log2(max(self.pixels_per_degree, 1e-6) * 360 / 256)
 
     def visible_bounds(self):
@@ -689,6 +705,10 @@ class MapPanel(QWidget):
 
             moved = event.position() - self._drag_start
 
+            # A small pixel threshold, not "moved by exactly 0" — a real
+            # click's mouse-down and mouse-up rarely land on the exact same
+            # pixel, and without slack every click would register as a
+            # (zero-distance) pan instead.
             if abs(moved.x()) < 4 and abs(moved.y()) < 4:
                 self.handle_click(event.position())
 

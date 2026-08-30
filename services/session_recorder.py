@@ -26,6 +26,10 @@ class SessionRecorder:
         if self.file:
 
             self.file.write(line + "\n")
+
+            # Flushed immediately rather than left to Python's default
+            # buffering — a crash or power loss mid-session should lose at
+            # most the in-flight line, not the whole session's recording.
             self.file.flush()
 
     def stop(self):
