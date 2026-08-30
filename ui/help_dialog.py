@@ -14,6 +14,12 @@ loaded, <b>Start</b> plays it back; <b>Slower</b>/<b>Faster</b> change the
 playback speed, and <b>Exit Replay</b> returns to live mode.
 </p>
 <p>
+Drag the scrubber in the toolbar to jump to a different point in a loaded
+replay. A large <b>Catching up…</b> badge appears on the map briefly while
+it replays the skipped span in the background, so tracks and vessel state
+arrive at the same point they'd be at if you'd played through normally.
+</p>
+<p>
 <b>Pause</b> halts processing without losing the current session. <b>Stop</b>
 halts and rewinds a loaded replay back to the start. <b>Clear</b> wipes the
 current session's targets and raw data — pinned (starred) vessels survive a
@@ -70,8 +76,10 @@ processed.
 <h3>Settings</h3>
 <p>
 <b>Communications</b> configures the AIS (and optional separate GNSS)
-serial port and baud rate. If your receiver doesn't communicate
-correctly, check the collapsed <b>Advanced</b> section:
+serial port and baud rate. Use each port's <b>Test</b> button to listen on
+it briefly and confirm data is actually arriving, before starting a full
+session. If your receiver doesn't communicate correctly, check the
+collapsed <b>Advanced</b> section:
 </p>
 <p>
 The <b>Serial Format</b> describes how each byte of data is framed on the
@@ -97,6 +105,18 @@ sometimes use different formats.
 go unheard-from before it's removed from the list, and how much track
 history is kept per vessel.
 </p>
+
+<h3>Keyboard Shortcuts</h3>
+<ul>
+<li><b>F5</b> — Start</li>
+<li><b>F6</b> — Pause</li>
+<li><b>F7</b> — Stop</li>
+<li><b>Ctrl+Shift+C</b> — Clear</li>
+<li><b>Ctrl+G</b> — Center map on GNSS fix</li>
+<li><b>Ctrl+End</b> — Skip to end of replay</li>
+<li><b>Ctrl+=</b> / <b>Ctrl+-</b> — Zoom map in/out</li>
+<li><b>Ctrl+O</b> — Open Replay...</li>
+</ul>
 """
 
 
