@@ -973,6 +973,7 @@ class MainWindow(QMainWindow):
     def show_communications(self):
 
         dialog = CommunicationsDialog(self.settings)
+        apply_title_bar_theme(dialog, self.settings["theme"])
 
         if dialog.exec():
             SettingsService.save(self.settings)
@@ -980,6 +981,7 @@ class MainWindow(QMainWindow):
     def show_preferences(self):
 
         dialog = PreferencesDialog(self.settings)
+        apply_title_bar_theme(dialog, self.settings["theme"])
 
         if dialog.exec():
             SettingsService.save(self.settings)
@@ -1113,11 +1115,13 @@ class MainWindow(QMainWindow):
     def show_help(self):
 
         dialog = HelpDialog()
+        apply_title_bar_theme(dialog, self.settings["theme"])
         dialog.exec()
 
     def show_about(self):
 
         dialog = AboutDialog()
+        apply_title_bar_theme(dialog, self.settings["theme"])
         dialog.exec()
 
     def export_screenshot(self):
