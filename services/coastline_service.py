@@ -178,10 +178,14 @@ class CoastlineService:
         # tiled result and only redo it when the shapefile itself changes.
         # tile_size/min_span_to_split are baked into the filename since a
         # cache built with different tiling parameters isn't valid for a
-        # different combination of them. "_merc1" marks the cache format
-        # that includes precomputed merc_y — bumped so caches written
-        # before that field existed aren't loaded and misread.
-        self.cache_path = f"{shapefile_path}.tiled_{min_span_to_split}_{tile_size}_merc1.cache.json"
+        # different combination of them. "_merc1" marked the cache format
+        # that includes precomputed merc_y; bumped to "_merc2" when
+        # mercator_y() started clamping at the poles (previously Antarctica's
+        # land polygon — its ring closes exactly at -90 latitude — cached an
+        # unclamped, near-infinite merc_y that made it render as if it
+        # extended infinitely south) so caches built before that clamp
+        # existed aren't loaded and misread.
+        self.cache_path = f"{shapefile_path}.tiled_{min_span_to_split}_{tile_size}_merc2.cache.json"
 
         # Separately cached: a simplified copy of the same rings, used at
         # wide zoom where the full 1:10m detail is both invisible and (at
@@ -189,7 +193,7 @@ class CoastlineService:
         # off the same tiling params plus the simplification tolerance.
         self.coarse_cache_path = (
             f"{shapefile_path}.tiled_{min_span_to_split}_{tile_size}"
-            f".coarse_{SIMPLIFY_TOLERANCE_DEG}_merc1.cache.json"
+            f".coarse_{SIMPLIFY_TOLERANCE_DEG}_merc2.cache.json"
         )
 
     def load(self):

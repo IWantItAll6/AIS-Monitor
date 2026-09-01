@@ -8,7 +8,9 @@ from services.coastline_service import CoastlineService
 from services.places_service import PlacesService
 from services.uk_towns_service import UkTownsService
 from services.shore_distance_service import annotate_shore_distances, FAR_SENTINEL_NM as FAR_SHORE_DISTANCE_NM
-from services.geo import NM_PER_UNIT, UNIT_SUFFIX, mercator_y, inverse_mercator_y
+from services.geo import (
+    NM_PER_UNIT, UNIT_SUFFIX, mercator_y, inverse_mercator_y, nice_scale_value, MAX_MERCATOR_LATITUDE
+)
 
 
 class MapPanel(QWidget):
@@ -40,9 +42,10 @@ class MapPanel(QWidget):
     PIN_RING_COLOR = QColor(255, 255, 255, 220)
     PIN_RING_RADIUS = 9
 
-    # The scale bar is a fixed length (a quarter of the map's width) with
-    # tick marks subdividing it — its on-screen length never changes, only
-    # the distance value labelling it does, as the map is zoomed.
+    # The scale bar's fixed on-screen length (a quarter of the map's width)
+    # with tick marks subdividing it — its on-screen length never changes;
+    # the E24 nice-number value labelling it is a rounded approximation of
+    # that fixed length instead. See draw_scale_bar()/nice_scale_value().
     SCALE_BAR_WIDTH_FRACTION = 0.25
     SCALE_BAR_TICKS = 4
 
@@ -59,10 +62,12 @@ class MapPanel(QWidget):
     # every repaint while dragging/zooming.
     PLACE_GRID_SIZE_DEGREES = 10
 
-    # Clamped so panning can never reach latitudes where cos(latitude) (used
-    # to keep longitude visually correct-width) collapses toward zero and
-    # the map squeezes to a sliver — see project()/paintEvent's lon_scale.
-    MAX_ABS_LATITUDE = 75
+    # Just the standard Web Mercator pole limit (see geo.MAX_MERCATOR_LATITUDE)
+    # — under true Mercator, unlike the old equirectangular-with-cos(center_lat)
+    # scheme this replaced, project()'s lon_scale no longer depends on
+    # center_lat at all, so there's no sliver-squeeze reason to clamp any
+    # tighter than where the projection itself stops being finite.
+    MAX_ABS_LATITUDE = MAX_MERCATOR_LATITUDE
 
     # Below this, switch coastline rendering to CoastlineService's
     # simplified geometry — profiling showed the full 1:10m detail (~450K
@@ -321,15 +326,23 @@ class MapPanel(QWidget):
 
     def fit_to_vessels(self):
 
-        positioned = [v for v in self.vessels if v.lat is not None and v.lon is not None]
+        positioned = [(v.lat, v.lon) for v in self.vessels if v.lat is not None and v.lon is not None]
+
+        # Own ship counts as a target too — otherwise "zoom to fit" can
+        # frame every other vessel while leaving your own position outside
+        # the view, or centered on a spot that no longer includes it.
+        own_lat, own_lon = self.own_position.get("lat"), self.own_position.get("lon")
+
+        if self.own_position.get("fix") and own_lat is not None and own_lon is not None:
+            positioned.append((own_lat, own_lon))
 
         if not positioned:
             return
 
-        min_lat = min(v.lat for v in positioned)
-        max_lat = max(v.lat for v in positioned)
-        min_lon = min(v.lon for v in positioned)
-        max_lon = max(v.lon for v in positioned)
+        min_lat = min(lat for lat, _ in positioned)
+        max_lat = max(lat for lat, _ in positioned)
+        min_lon = min(lon for _, lon in positioned)
+        max_lon = max(lon for _, lon in positioned)
 
         self.center_lat = max(-self.MAX_ABS_LATITUDE, min(self.MAX_ABS_LATITUDE, (min_lat + max_lat) / 2))
         self.center_lon = (min_lon + max_lon) / 2
@@ -468,13 +481,16 @@ class MapPanel(QWidget):
         ]
 
         font = painter.font()
-        font.setPointSize(11)
+        font.setPointSize(9)
         painter.setFont(font)
 
         metrics = painter.fontMetrics()
         line_height = metrics.height()
 
-        painter.setPen(QColor(255, 255, 255, 200))
+        # Deliberately low-contrast — a hint for an empty map, not a modal
+        # that should compete with anything drawn on top of it once data
+        # starts arriving.
+        painter.setPen(QColor(255, 255, 255, 110))
 
         top = self.height() / 2 - (len(lines) * line_height) / 2
 
@@ -529,12 +545,17 @@ class MapPanel(QWidget):
 
         pixels_per_unit = pixels_per_nm / NM_PER_UNIT.get(self.distance_unit, 1.0)
 
-        # Fixed on-screen length — like a ruler, not a Google-Maps-style bar
-        # that snaps to round numbers. The value it represents is computed
-        # directly from the current scale and always shown to the precision
-        # that's actually meaningful (more decimal places at deep zoom).
+        # The bar itself is a fixed on-screen length (a quarter of the map's
+        # width) — it never resizes with zoom or pan, only the map itself
+        # does. Its exact raw value is instead rounded to the nearest E24
+        # step for the label — see nice_scale_value().
         bar_px = self.width() * self.SCALE_BAR_WIDTH_FRACTION
-        value = bar_px / pixels_per_unit
+        raw_value = bar_px / pixels_per_unit
+
+        value, decimals = nice_scale_value(raw_value)
+
+        if value <= 0:
+            return
 
         x0 = 15
         y0 = self.height() - 15
@@ -554,10 +575,6 @@ class MapPanel(QWidget):
             painter.drawLine(QPointF(x, y0 - tick_half_height), QPointF(x, y0 + tick_half_height))
 
         unit_suffix = UNIT_SUFFIX.get(self.distance_unit, self.distance_unit)
-
-        # More decimal places once the value drops below 1 — "0 nm" at deep
-        # zoom would be worse than useless.
-        decimals = 0 if value >= 10 else (1 if value >= 1 else 2)
 
         font = painter.font()
         font.setPointSize(8)
