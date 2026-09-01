@@ -29,6 +29,11 @@ data/geonames/**/*.shore_distance.cache.json
 # Live session recordings — user-generated data, not source.
 data/recordings/
 
+# Crash traceback log — see services/crash_handler.py. Runtime output, not
+# source, and can capture whatever the app was doing (positions, filenames)
+# at the moment it crashed.
+data/crash.log
+
 # Real field-test capture logs — can bake in a real receiver's test
 # location, so kept local rather than committed. See resources/README.md.
 # sample_replay.log is fully synthetic (see scripts/generate_sample_log.py)
