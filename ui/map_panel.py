@@ -8,13 +8,16 @@ from services.coastline_service import CoastlineService
 from services.places_service import PlacesService
 from services.uk_towns_service import UkTownsService
 from services.shore_distance_service import annotate_shore_distances, FAR_SENTINEL_NM as FAR_SHORE_DISTANCE_NM
-from services.geo import NM_PER_UNIT, UNIT_SUFFIX
+from services.geo import NM_PER_UNIT, UNIT_SUFFIX, mercator_y, inverse_mercator_y
 
 
 class MapPanel(QWidget):
 
     vessel_clicked = Signal(int)
     vessel_double_clicked = Signal(int)
+
+    DEFAULT_CENTER_LAT = 54.5
+    DEFAULT_CENTER_LON = -3.0
 
     WATER_COLOR = QColor(20, 40, 60)
     LAND_COLOR = QColor(60, 90, 50)
@@ -64,13 +67,17 @@ class MapPanel(QWidget):
     # Below this, switch coastline rendering to CoastlineService's
     # simplified geometry — profiling showed the full 1:10m detail (~450K
     # points worldwide) takes a repaint from ~15ms to 150-300ms at wide
-    # zoom, which is what made panning feel laggy at those scales.
-    COARSE_RENDER_THRESHOLD_PPD = 30
+    # zoom, which is what made panning feel laggy at those scales. Derived
+    # from the old threshold (0.5 old-pixels-per-nm) the same way as
+    # DEFAULT_SCALE, as a starting point — a pure perf-tuning knob, not
+    # user-visible behavior, so it's fine to retune after profiling.
+    COARSE_RENDER_THRESHOLD_SCALE = 0.5 * cos(radians(DEFAULT_CENTER_LAT))
 
     # Ceiling on how far fit_to_vessels()/wheel-zoom can zoom in — without
     # this, a cluster of vessels at (near-)identical positions would drive
-    # pixels_per_degree towards infinity.
-    MAX_PIXELS_PER_DEGREE = 5_000_000
+    # scale towards infinity. Just needs to comfortably exceed any real
+    # zoom-to-fit case (a 0.01nm-wide cluster needs roughly 25,000).
+    MAX_SCALE = 1_000_000
 
     # Points north (up) before rotation — QPainter.rotate() is clockwise,
     # matching compass bearings, so rotating by heading/COG degrees directly
@@ -104,9 +111,13 @@ class MapPanel(QWidget):
     # labels must clear this even for vessels whose own label got suppressed.
     MARKER_HALF_SIZE = 7
 
-    DEFAULT_CENTER_LAT = 54.5
-    DEFAULT_CENTER_LON = -3.0
-    DEFAULT_PIXELS_PER_DEGREE = 45
+    # `scale` means pixels per nautical mile AT THE EQUATOR — the single
+    # Mercator zoom parameter (same for both axes; see project()). 0.75 is
+    # the old default view's pixels-per-nm (accurate everywhere in the
+    # previous equirectangular scheme), converted to the equator-referenced
+    # value that reproduces the same on-screen zoom at DEFAULT_CENTER_LAT,
+    # so the startup view looks the same as before.
+    DEFAULT_SCALE = 0.75 * cos(radians(DEFAULT_CENTER_LAT))
 
     # Matches the per-notch factor wheelEvent already used, so the +/-
     # buttons feel like a single wheel notch rather than a bigger jump.
@@ -139,7 +150,7 @@ class MapPanel(QWidget):
         self.center_lat = self.DEFAULT_CENTER_LAT
         self.center_lon = self.DEFAULT_CENTER_LON
 
-        self.pixels_per_degree = self.DEFAULT_PIXELS_PER_DEGREE
+        self.scale = self.DEFAULT_SCALE
 
         self.vessels = []
         self.own_position = {"lat": None, "lon": None, "fix": False}
@@ -257,13 +268,13 @@ class MapPanel(QWidget):
 
     def zoom_in(self):
 
-        self.pixels_per_degree *= self.ZOOM_FACTOR
+        self.scale *= self.ZOOM_FACTOR
 
         self.update()
 
     def zoom_out(self):
 
-        self.pixels_per_degree /= self.ZOOM_FACTOR
+        self.scale /= self.ZOOM_FACTOR
 
         self.update()
 
@@ -308,37 +319,6 @@ class MapPanel(QWidget):
 
         self.update()
 
-    def fit_to_extent(self):
-
-        rings = self.coastline.rings
-
-        if not rings:
-            return
-
-        min_lat = min(r["min_lat"] for r in rings)
-        max_lat = max(r["max_lat"] for r in rings)
-        min_lon = min(r["min_lon"] for r in rings)
-        max_lon = max(r["max_lon"] for r in rings)
-
-        self.center_lat = (min_lat + max_lat) / 2
-        self.center_lon = (min_lon + max_lon) / 2
-
-        lat_span = max(max_lat - min_lat, 1)
-        lon_span = max(max_lon - min_lon, 1)
-
-        # An assumed viewport size rather than the widget's actual current
-        # size — this runs once at startup before the window has necessarily
-        # settled into its final geometry. Only the ratio between the lat
-        # and lon scales below matters, not this value's absolute size.
-        view_size = 800
-
-        scale_lat = view_size / lat_span
-        scale_lon = view_size / (lon_span * cos(radians(self.center_lat)))
-
-        # Whichever axis is more constraining wins, so the full extent fits
-        # without cropping either dimension.
-        self.pixels_per_degree = min(scale_lat, scale_lon)
-
     def fit_to_vessels(self):
 
         positioned = [v for v in self.vessels if v.lat is not None and v.lon is not None]
@@ -356,17 +336,19 @@ class MapPanel(QWidget):
 
         # 15% padding so targets aren't flush against the edge of the view.
         # The span floor here only guards against division by zero when
-        # every vessel is at/near the exact same point — MAX_PIXELS_PER_DEGREE
-        # below is what actually stops that case zooming in to infinity, so
-        # a tight-but-real cluster (e.g. two vessels 0.01nm apart) can still
-        # zoom in as far as that cluster genuinely warrants.
-        lat_span = max((max_lat - min_lat) * 1.15, 1e-6)
-        lon_span = max((max_lon - min_lon) * 1.15, 1e-6)
+        # every vessel is at/near the exact same point — MAX_SCALE below is
+        # what actually stops that case zooming in to infinity, so a
+        # tight-but-real cluster (e.g. two vessels 0.01nm apart) can still
+        # zoom in as far as that cluster genuinely warrants. Spans are in
+        # Mercator-y/longitude nm-equivalent units (see project()), not raw
+        # degrees, so scale comes out directly in pixels-per-equatorial-nm.
+        y_span = max((mercator_y(max_lat) - mercator_y(min_lat)) * 1.15, 1e-6)
+        x_span = max((max_lon - min_lon) * 60 * 1.15, 1e-6)
 
-        scale_lat = self.height() / lat_span
-        scale_lon = self.width() / (lon_span * cos(radians(self.center_lat)))
+        scale_lat = self.height() / y_span
+        scale_lon = self.width() / x_span
 
-        self.pixels_per_degree = min(scale_lat, scale_lon, self.MAX_PIXELS_PER_DEGREE)
+        self.scale = min(scale_lat, scale_lon, self.MAX_SCALE)
 
         self.update()
 
@@ -379,17 +361,15 @@ class MapPanel(QWidget):
 
     def project(self, lat, lon):
 
-        # Equirectangular projection, scaled by cos(center latitude) so a
-        # degree of longitude shrinks to its correct on-screen width as you
-        # move away from the equator. It's only locally accurate around
-        # center_lat, not a true Mercator — fine for this app's zoom ranges,
-        # not for wide-area or near-polar viewing.
-        x = (
-            self.width() / 2
-            + (lon - self.center_lon) * self.pixels_per_degree * cos(radians(self.center_lat))
-        )
-
-        y = self.height() / 2 - (lat - self.center_lat) * self.pixels_per_degree
+        # True (spherical) Web Mercator, in nm-equivalent units (1 degree
+        # longitude = 60nm, matching the app's existing convention) so
+        # `scale` means pixels per nautical mile at the equator. Unlike the
+        # old equirectangular-with-cos(center_lat) approach, each point's
+        # OWN latitude determines its scale here, not the current view
+        # center — so nothing about a point's projection changes as you
+        # pan, which is what made the map visibly thin/thicken before.
+        x = self.width() / 2 + (lon * 60 - self.center_lon * 60) * self.scale
+        y = self.height() / 2 - (mercator_y(lat) - mercator_y(self.center_lat)) * self.scale
 
         return QPointF(x, y)
 
@@ -399,20 +379,29 @@ class MapPanel(QWidget):
         # (360 degrees of longitude wrapping the world, 256px being the
         # standard web-map tile size) purely so the zoom-dependent place
         # thresholds in PlacesService/UkTownsService read like familiar map
-        # zoom numbers — this app has no actual tiles.
-        return log2(max(self.pixels_per_degree, 1e-6) * 360 / 256)
+        # zoom numbers — this app has no actual tiles. Converted through the
+        # local pixels-per-degree-latitude at the current center so these
+        # thresholds (tuned against the old, always-locally-accurate
+        # formula) keep meaning the same thing under Mercator.
+        local_pixels_per_degree = self.scale * 60 / cos(radians(self.center_lat))
+
+        return log2(max(local_pixels_per_degree, 1e-6) * 360 / 256)
 
     def visible_bounds(self):
 
-        half_lon = (self.width() / 2) / (self.pixels_per_degree * cos(radians(self.center_lat)))
-        half_lat = (self.height() / 2) / self.pixels_per_degree
+        # x and y are independent under Mercator, so each edge of the
+        # viewport just needs its own inverse projection rather than a
+        # symmetric half-span computed from the center.
+        half_width_nm = (self.width() / 2) / self.scale
+        min_lon = self.center_lon - half_width_nm / 60
+        max_lon = self.center_lon + half_width_nm / 60
 
-        return (
-            self.center_lon - half_lon,
-            self.center_lon + half_lon,
-            self.center_lat - half_lat,
-            self.center_lat + half_lat
-        )
+        half_height_nm = (self.height() / 2) / self.scale
+        center_y = mercator_y(self.center_lat)
+        max_lat = inverse_mercator_y(center_y + half_height_nm)
+        min_lat = inverse_mercator_y(center_y - half_height_nm)
+
+        return (min_lon, max_lon, min_lat, max_lat)
 
     def paintEvent(self, event):
 
@@ -427,13 +416,20 @@ class MapPanel(QWidget):
         painter.setBrush(self.LAND_COLOR)
 
         cx, cy = self.width() / 2, self.height() / 2
-        center_lat, center_lon = self.center_lat, self.center_lon
-        lon_scale = self.pixels_per_degree * cos(radians(center_lat))
-        lat_scale = self.pixels_per_degree
+        center_lon = self.center_lon
+        center_merc_y = mercator_y(self.center_lat)
+
+        # Cheap linear scale per point, same as before — the nonlinear
+        # Mercator transform for each point's latitude is precomputed once
+        # at load time (CoastlineService._add_ring's "merc_y") rather than
+        # recomputed here on every repaint, so this hot loop's per-point
+        # cost is unchanged from the pre-Mercator version.
+        lon_scale = 60 * self.scale
+        y_scale = self.scale
 
         min_lon, max_lon, min_lat, max_lat = self.visible_bounds()
 
-        if self.pixels_per_degree < self.COARSE_RENDER_THRESHOLD_PPD:
+        if self.scale < self.COARSE_RENDER_THRESHOLD_SCALE:
             visible_rings = self.coastline.coarse_rings_in_bounds(min_lon, max_lon, min_lat, max_lat)
         else:
             visible_rings = self.coastline.rings_in_bounds(min_lon, max_lon, min_lat, max_lat)
@@ -447,8 +443,8 @@ class MapPanel(QWidget):
                 continue
 
             polygon = QPolygonF([
-                QPointF(cx + (lon - center_lon) * lon_scale, cy - (lat - center_lat) * lat_scale)
-                for lon, lat in ring["points"]
+                QPointF(cx + (lon - center_lon) * lon_scale, cy - (merc_y - center_merc_y) * y_scale)
+                for (lon, _), merc_y in zip(ring["points"], ring["merc_y"])
             ])
 
             painter.drawPolygon(polygon)
@@ -522,10 +518,11 @@ class MapPanel(QWidget):
 
     def draw_scale_bar(self, painter):
 
-        # 1 degree of latitude is, by definition, 60 nautical miles — using
-        # latitude rather than longitude for the scale avoids the cos(lat)
-        # longitude compression.
-        pixels_per_nm = self.pixels_per_degree / 60
+        # scale is pixels-per-nm AT THE EQUATOR; under Mercator the LOCAL
+        # pixels-per-nm at the current view's latitude is scale/cos(lat) —
+        # matching how real Mercator chart scale bars are stated as
+        # accurate "at latitude X" rather than universally.
+        pixels_per_nm = self.scale / cos(radians(self.center_lat))
 
         if pixels_per_nm <= 0:
             return
@@ -847,15 +844,15 @@ class MapPanel(QWidget):
         delta = pos - self._drag_last
         self._drag_last = pos
 
-        # Each step uses the *current* center_lat for the cos(lat) factor —
-        # not a value frozen at drag-start — so this stays consistent with
-        # every render path (project()/paintEvent/visible_bounds all use the
-        # live center_lat too). Freezing it at drag-start let the map
-        # visibly slip relative to the cursor on any drag that also crossed
-        # a meaningful change in latitude.
-        self.center_lon -= delta.x() / (self.pixels_per_degree * cos(radians(self.center_lat)))
+        # Under Mercator, `scale` applies uniformly regardless of latitude
+        # (unlike the old pixels_per_degree*cos(center_lat), which changed
+        # as center_lat changed mid-drag and let the map visibly slip
+        # relative to the cursor) — so panning is just a linear delta in
+        # projected space, then converted back to lat/lon.
+        self.center_lon -= delta.x() / (60 * self.scale)
 
-        new_lat = self.center_lat + delta.y() / self.pixels_per_degree
+        new_merc_y = mercator_y(self.center_lat) + delta.y() / self.scale
+        new_lat = inverse_mercator_y(new_merc_y)
         self.center_lat = max(-self.MAX_ABS_LATITUDE, min(self.MAX_ABS_LATITUDE, new_lat))
 
         self.update()

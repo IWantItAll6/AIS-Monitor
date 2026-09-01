@@ -1,4 +1,10 @@
-from services.geo import calculate_range_bearing, convert_distance, format_distance
+from services.geo import (
+    calculate_range_bearing,
+    convert_distance,
+    format_distance,
+    mercator_y,
+    inverse_mercator_y,
+)
 
 
 def test_same_point_is_zero_distance():
@@ -34,3 +40,27 @@ def test_format_distance_uses_uppercase_nm_and_correct_suffixes():
     assert format_distance(10, "NM") == "10.00 NM"
     assert format_distance(10, "Miles") == "11.51 mi"
     assert format_distance(10, "Km") == "18.52 km"
+
+
+def test_mercator_y_at_equator_is_zero():
+
+    assert abs(mercator_y(0)) < 1e-9
+
+
+def test_mercator_y_round_trips_through_inverse():
+
+    for lat in [-74.9, -54.5, -10, 0, 10, 54.5, 74.9]:
+
+        assert abs(inverse_mercator_y(mercator_y(lat)) - lat) < 1e-9
+
+
+def test_mercator_y_matches_60nm_per_degree_at_equator():
+
+    # 1 degree of latitude is 60nm everywhere on the globe, and Mercator's
+    # y-scale is exact (undistorted) at the equator — so a small step
+    # either side of 0 should read very close to 60nm/degree.
+    step = 1e-4
+
+    slope = (mercator_y(step) - mercator_y(-step)) / (2 * step)
+
+    assert abs(slope - 60) < 1e-6

@@ -4,6 +4,8 @@ from math import hypot
 
 import shapefile
 
+from services.geo import mercator_y
+
 # Only rings spanning more than this get split at all — leaves the vast
 # majority of rings (islands, individual coastline segments) untouched.
 MIN_SPAN_TO_SPLIT = 30
@@ -176,8 +178,10 @@ class CoastlineService:
         # tiled result and only redo it when the shapefile itself changes.
         # tile_size/min_span_to_split are baked into the filename since a
         # cache built with different tiling parameters isn't valid for a
-        # different combination of them.
-        self.cache_path = f"{shapefile_path}.tiled_{min_span_to_split}_{tile_size}.cache.json"
+        # different combination of them. "_merc1" marks the cache format
+        # that includes precomputed merc_y — bumped so caches written
+        # before that field existed aren't loaded and misread.
+        self.cache_path = f"{shapefile_path}.tiled_{min_span_to_split}_{tile_size}_merc1.cache.json"
 
         # Separately cached: a simplified copy of the same rings, used at
         # wide zoom where the full 1:10m detail is both invisible and (at
@@ -185,7 +189,7 @@ class CoastlineService:
         # off the same tiling params plus the simplification tolerance.
         self.coarse_cache_path = (
             f"{shapefile_path}.tiled_{min_span_to_split}_{tile_size}"
-            f".coarse_{SIMPLIFY_TOLERANCE_DEG}.cache.json"
+            f".coarse_{SIMPLIFY_TOLERANCE_DEG}_merc1.cache.json"
         )
 
     def load(self):
@@ -214,10 +218,21 @@ class CoastlineService:
 
         if not self._load_coarse_from_cache():
 
-            self.coarse_rings = [
-                {**ring, "points": simplify_ring(ring["points"], SIMPLIFY_TOLERANCE_DEG)}
-                for ring in self.rings
-            ]
+            self.coarse_rings = []
+
+            for ring in self.rings:
+
+                simplified_points = simplify_ring(ring["points"], SIMPLIFY_TOLERANCE_DEG)
+
+                # merc_y must be recomputed against the simplified point
+                # set, not inherited from the full-resolution ring — it's a
+                # parallel list keyed by index, and simplification changes
+                # both the length and the indices.
+                self.coarse_rings.append({
+                    **ring,
+                    "points": simplified_points,
+                    "merc_y": [mercator_y(lat) for _, lat in simplified_points],
+                })
 
             self._save_coarse_to_cache()
 
@@ -299,6 +314,13 @@ class CoastlineService:
 
         self.rings.append({
             "points": points,
+            # Precomputed once here rather than per-frame in MapPanel's
+            # paint loop — each point's Mercator y needs a log/tan call,
+            # which is cheap once but far too costly to redo for ~450K
+            # points on every repaint. Kept as a parallel list (not baked
+            # into "points") so callers that only need raw lon/lat are
+            # unaffected.
+            "merc_y": [mercator_y(lat) for lat in lats],
             "min_lon": min(lons),
             "max_lon": max(lons),
             "min_lat": min(lats),

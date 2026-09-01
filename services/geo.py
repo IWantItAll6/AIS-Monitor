@@ -1,4 +1,4 @@
-from math import radians, sin, cos, sqrt, atan2, degrees
+from math import radians, sin, cos, sqrt, atan2, atan, exp, log, tan, degrees, pi
 
 NM_PER_UNIT = {
     "NM": 1.0,
@@ -21,6 +21,22 @@ def convert_distance(distance_nm, unit):
 def format_distance(distance_nm, unit):
 
     return f"{convert_distance(distance_nm, unit):.2f} {UNIT_SUFFIX.get(unit, unit)}"
+
+
+def mercator_y(lat_deg):
+
+    # Spherical Web Mercator's y-coordinate, scaled so degrees of latitude
+    # near the equator read as nautical miles (60nm/degree) — matching the
+    # app's existing lat/lon-as-nm convention rather than an arbitrary
+    # Earth-radius unit. Diverges as lat_deg approaches +-90; callers are
+    # expected to keep latitude within a sane navigable range (this app
+    # clamps to +-75, see MapPanel.MAX_ABS_LATITUDE).
+    return 60 * degrees(log(tan(pi / 4 + radians(lat_deg) / 2)))
+
+
+def inverse_mercator_y(y):
+
+    return degrees(2 * atan(exp(radians(y / 60))) - pi / 2)
 
 
 def calculate_range_bearing(lat1, lon1, lat2, lon2):
