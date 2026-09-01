@@ -201,9 +201,18 @@ set by <b>Preferences &gt; Track Length</b>.
 Other AIS station types use their own marker shape rather than the vessel
 triangle: a <b>square</b> is a base station, a <b>diamond</b> is an Aid to
 Navigation (hollow for a virtual AtoN with no physical structure), and a
-<b>circle with a cross</b> is a SART, MOB, or EPIRB distress beacon.
+<b>circle with a cross</b> is a SART, MOB, or EPIRB distress beacon — pinning
+one of these shifts it from bright red to a softer pastel red rather than
+gold, so it never stops reading as a distress mark.
 </p>
 <p><img src="legend://markers"></p>
+<p>
+<b>View &gt; Show Place Names</b> toggles town/city labels on the map. In
+<b>Preferences &gt; Map</b> you can further restrict labels to only towns
+within a given distance of the coast. The <b>Zoom to Fit</b> command
+(Run menu, or Ctrl+0) reframes the map to show every currently positioned
+target.
+</p>
 
 <h3>Raw Data</h3>
 <p>

@@ -1,5 +1,6 @@
 import json
 import os
+from math import hypot
 
 import shapefile
 
@@ -9,6 +10,18 @@ MIN_SPAN_TO_SPLIT = 30
 
 # Granularity used once a ring is deemed worth splitting.
 TILE_SIZE_DEGREES = 10
+
+# Bucket size for the lookup grid used by rings_in_bounds() — coarser than
+# the tiling above since this only needs to prune "obviously nowhere near
+# the viewport" rings cheaply, not partition geometry.
+GRID_SIZE_DEGREES = 20
+
+# Simplification tolerance (degrees) for the coarse ring set used at wide
+# zoom — see coarse_rings_in_bounds(). ~0.05deg (~3nm) keeps continental
+# shapes recognizable while cutting the full 1:10m dataset's point count
+# drastically; measured to take rendering at a world-scale view from
+# ~300ms/frame down to something that actually tracks the mouse.
+SIMPLIFY_TOLERANCE_DEG = 0.05
 
 
 # Sutherland-Hodgman polygon clipping: clip_polygon() below runs this once
@@ -57,6 +70,94 @@ def clip_polygon(points, min_lon, max_lon, min_lat, max_lat):
     return pts
 
 
+def _perpendicular_distance(point, start, end):
+
+    x0, y0 = point
+    x1, y1 = start
+    x2, y2 = end
+
+    if (x1, y1) == (x2, y2):
+        return hypot(x0 - x1, y0 - y1)
+
+    num = abs((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1)
+    den = hypot(y2 - y1, x2 - x1)
+
+    return num / den
+
+
+def simplify_ring(points, tolerance):
+
+    # Ramer-Douglas-Peucker: keep the two endpoints, find the point
+    # furthest from the line between them, and recurse on both halves only
+    # if that point is further than tolerance away — points that lie
+    # essentially on the straight line get dropped.
+    if len(points) < 3:
+        return points
+
+    start, end = points[0], points[-1]
+
+    max_dist = 0
+    index = 0
+
+    for i in range(1, len(points) - 1):
+
+        dist = _perpendicular_distance(points[i], start, end)
+
+        if dist > max_dist:
+            index = i
+            max_dist = dist
+
+    if max_dist > tolerance:
+
+        left = simplify_ring(points[:index + 1], tolerance)
+        right = simplify_ring(points[index:], tolerance)
+
+        return left[:-1] + right
+
+    return [start, end]
+
+
+def _build_bucket_grid(rings):
+
+    grid = {}
+
+    for ring in rings:
+
+        gx0 = int(ring["min_lon"] // GRID_SIZE_DEGREES)
+        gx1 = int(ring["max_lon"] // GRID_SIZE_DEGREES)
+        gy0 = int(ring["min_lat"] // GRID_SIZE_DEGREES)
+        gy1 = int(ring["max_lat"] // GRID_SIZE_DEGREES)
+
+        for gx in range(gx0, gx1 + 1):
+            for gy in range(gy0, gy1 + 1):
+                grid.setdefault((gx, gy), []).append(ring)
+
+    return grid
+
+
+def _query_bucket_grid(grid, min_lon, max_lon, min_lat, max_lat):
+
+    # A ring can be filed under more than one bucket (it's added to every
+    # bucket its bounding box touches), so dedupe by identity rather than
+    # returning duplicates to the caller.
+    seen = set()
+    result = []
+
+    gx0 = int(min_lon // GRID_SIZE_DEGREES)
+    gx1 = int(max_lon // GRID_SIZE_DEGREES)
+    gy0 = int(min_lat // GRID_SIZE_DEGREES)
+    gy1 = int(max_lat // GRID_SIZE_DEGREES)
+
+    for gx in range(gx0, gx1 + 1):
+        for gy in range(gy0, gy1 + 1):
+            for ring in grid.get((gx, gy), []):
+                if id(ring) not in seen:
+                    seen.add(id(ring))
+                    result.append(ring)
+
+    return result
+
+
 class CoastlineService:
 
     def __init__(self, shapefile_path, tile_size=TILE_SIZE_DEGREES, min_span_to_split=MIN_SPAN_TO_SPLIT):
@@ -66,6 +167,9 @@ class CoastlineService:
         self.min_span_to_split = min_span_to_split
 
         self.rings = []
+        self.coarse_rings = []
+        self.grid = {}
+        self.coarse_grid = {}
 
         # Parsing the full-resolution shapefile and re-tiling every large
         # landmass is slow enough to notice on every app launch — cache the
@@ -75,32 +179,64 @@ class CoastlineService:
         # different combination of them.
         self.cache_path = f"{shapefile_path}.tiled_{min_span_to_split}_{tile_size}.cache.json"
 
+        # Separately cached: a simplified copy of the same rings, used at
+        # wide zoom where the full 1:10m detail is both invisible and (at
+        # ~450K points worldwide) expensive to scan/draw every frame. Keyed
+        # off the same tiling params plus the simplification tolerance.
+        self.coarse_cache_path = (
+            f"{shapefile_path}.tiled_{min_span_to_split}_{tile_size}"
+            f".coarse_{SIMPLIFY_TOLERANCE_DEG}.cache.json"
+        )
+
     def load(self):
 
-        if self._load_from_cache():
-            return self.rings
+        if not self._load_from_cache():
 
-        self.rings = []
+            self.rings = []
 
-        reader = shapefile.Reader(self.shapefile_path)
+            reader = shapefile.Reader(self.shapefile_path)
 
-        for shape in reader.shapes():
+            for shape in reader.shapes():
 
-            points = shape.points
-            parts = list(shape.parts) + [len(points)]
+                points = shape.points
+                parts = list(shape.parts) + [len(points)]
 
-            for i in range(len(parts) - 1):
+                for i in range(len(parts) - 1):
 
-                ring = points[parts[i]:parts[i + 1]]
+                    ring = points[parts[i]:parts[i + 1]]
 
-                if len(ring) < 3:
-                    continue
+                    if len(ring) < 3:
+                        continue
 
-                self._add_tiled(ring)
+                    self._add_tiled(ring)
 
-        self._save_to_cache()
+            self._save_to_cache()
+
+        if not self._load_coarse_from_cache():
+
+            self.coarse_rings = [
+                {**ring, "points": simplify_ring(ring["points"], SIMPLIFY_TOLERANCE_DEG)}
+                for ring in self.rings
+            ]
+
+            self._save_coarse_to_cache()
+
+        self._build_grid()
 
         return self.rings
+
+    def _build_grid(self):
+
+        # Rebuilt fresh every load (cache hit or not) — cheap in-memory
+        # indexing over already-loaded rings, not worth persisting itself.
+        self.grid = _build_bucket_grid(self.rings)
+        self.coarse_grid = _build_bucket_grid(self.coarse_rings)
+
+    def rings_in_bounds(self, min_lon, max_lon, min_lat, max_lat):
+        return _query_bucket_grid(self.grid, min_lon, max_lon, min_lat, max_lat)
+
+    def coarse_rings_in_bounds(self, min_lon, max_lon, min_lat, max_lat):
+        return _query_bucket_grid(self.coarse_grid, min_lon, max_lon, min_lat, max_lat)
 
     def _load_from_cache(self):
 
@@ -126,6 +262,32 @@ class CoastlineService:
         try:
             with open(self.cache_path, "w") as f:
                 json.dump(self.rings, f)
+
+        except Exception:
+            pass
+
+    def _load_coarse_from_cache(self):
+
+        if not os.path.exists(self.coarse_cache_path):
+            return False
+
+        if os.path.getmtime(self.coarse_cache_path) < os.path.getmtime(self.cache_path):
+            return False
+
+        try:
+            with open(self.coarse_cache_path, "r") as f:
+                self.coarse_rings = json.load(f)
+
+            return True
+
+        except Exception:
+            return False
+
+    def _save_coarse_to_cache(self):
+
+        try:
+            with open(self.coarse_cache_path, "w") as f:
+                json.dump(self.coarse_rings, f)
 
         except Exception:
             pass

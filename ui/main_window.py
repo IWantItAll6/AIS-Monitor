@@ -166,6 +166,10 @@ class MainWindow(QMainWindow):
         self.map_view.set_distance_unit(self.settings["distance_unit"])
         self.map_view.set_vessel_color(self.settings["vessel_color"])
         self.map_view.set_pinned_color(self.settings["pinned_color"])
+        self.map_view.set_show_place_names(self.settings["show_place_names"])
+        self.map_view.set_coastal_filter(
+            self.settings["coastal_towns_only"], float(self.settings["coastal_threshold_nm"])
+        )
 
         map_layout.addWidget(self.map_view)
 
@@ -196,7 +200,7 @@ class MainWindow(QMainWindow):
 
         self.target_tree.setColumnWidth(0, 25)  # Star
         self.target_tree.setColumnWidth(1, 95)  # MMSI
-        self.target_tree.setColumnWidth(3, 60)  # Range
+        self.target_tree.setColumnWidth(3, 85)  # Range
         self.target_tree.setColumnWidth(4, 65)  # Bearing
         self.target_tree.setColumnWidth(5, 55)  # RSSI
         self.target_tree.setColumnWidth(6, 55)  # Seen
@@ -482,6 +486,10 @@ class MainWindow(QMainWindow):
         self.zoom_out_action = QAction("Zoom Out", self)
         self.zoom_out_action.setShortcut(QKeySequence("Ctrl+-"))
         self.zoom_out_action.triggered.connect(self.map_view.zoom_out)
+
+        self.zoom_fit_action = QAction("Zoom to Fit", self)
+        self.zoom_fit_action.setShortcut(QKeySequence("Ctrl+0"))
+        self.zoom_fit_action.triggered.connect(self.map_view.fit_to_vessels)
 
     def start_clicked(self):
 
@@ -990,6 +998,9 @@ class MainWindow(QMainWindow):
             self.map_view.set_distance_unit(self.settings["distance_unit"])
             self.map_view.set_vessel_color(self.settings["vessel_color"])
             self.map_view.set_pinned_color(self.settings["pinned_color"])
+            self.map_view.set_coastal_filter(
+                self.settings["coastal_towns_only"], float(self.settings["coastal_threshold_nm"])
+            )
             self.recorder.directory = Path(self.settings["recordings_folder"])
 
     def create_menu(self):
@@ -1015,6 +1026,7 @@ class MainWindow(QMainWindow):
         run_menu.addAction(self.center_gnss_action)
         run_menu.addAction(self.zoom_in_action)
         run_menu.addAction(self.zoom_out_action)
+        run_menu.addAction(self.zoom_fit_action)
 
         run_menu.addSeparator()
 
@@ -1033,6 +1045,11 @@ class MainWindow(QMainWindow):
         # value actually changes, so this can't loop.
         self.show_raw_data_action.toggled.connect(self.raw_toggle.setChecked)
         self.raw_toggle.toggled.connect(self.show_raw_data_action.setChecked)
+
+        self.show_place_names_action = view_menu.addAction("Show Place Names")
+        self.show_place_names_action.setCheckable(True)
+        self.show_place_names_action.setChecked(self.settings["show_place_names"])
+        self.show_place_names_action.toggled.connect(self.set_show_place_names)
 
         columns_menu = view_menu.addMenu("Select Columns")
 
@@ -1198,6 +1215,14 @@ class MainWindow(QMainWindow):
         self.target_tree.setColumnHidden(index, not visible)
 
         self.settings.setdefault("visible_columns", {})[name] = visible
+
+        SettingsService.save(self.settings)
+
+    def set_show_place_names(self, show):
+
+        self.map_view.set_show_place_names(show)
+
+        self.settings["show_place_names"] = show
 
         SettingsService.save(self.settings)
 

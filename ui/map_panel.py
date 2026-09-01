@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, QPointF, QRect, QRectF, Signal
 from services.coastline_service import CoastlineService
 from services.places_service import PlacesService
 from services.uk_towns_service import UkTownsService
+from services.shore_distance_service import annotate_shore_distances, FAR_SENTINEL_NM as FAR_SHORE_DISTANCE_NM
 from services.geo import NM_PER_UNIT, UNIT_SUFFIX
 
 
@@ -36,7 +37,11 @@ class MapPanel(QWidget):
     PIN_RING_COLOR = QColor(255, 255, 255, 220)
     PIN_RING_RADIUS = 9
 
-    SCALE_STEPS_NM = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000]
+    # The scale bar is a fixed length (a quarter of the map's width) with
+    # tick marks subdividing it — its on-screen length never changes, only
+    # the distance value labelling it does, as the map is zoomed.
+    SCALE_BAR_WIDTH_FRACTION = 0.25
+    SCALE_BAR_TICKS = 4
 
     # Caps how many town/city dots+labels render regardless of how many
     # technically qualify by zoom level — without this, a moderate zoom
@@ -44,6 +49,28 @@ class MapPanel(QWidget):
     # at once (population-based zoom thresholds don't know how many
     # candidates fall in the current viewport).
     MAX_VISIBLE_PLACES = 60
+
+    # Bucket size for the lookup grid used to narrow the combined
+    # places+towns list to roughly what's in view before the precise
+    # per-frame filtering — avoids re-scanning every place worldwide on
+    # every repaint while dragging/zooming.
+    PLACE_GRID_SIZE_DEGREES = 10
+
+    # Clamped so panning can never reach latitudes where cos(latitude) (used
+    # to keep longitude visually correct-width) collapses toward zero and
+    # the map squeezes to a sliver — see project()/paintEvent's lon_scale.
+    MAX_ABS_LATITUDE = 75
+
+    # Below this, switch coastline rendering to CoastlineService's
+    # simplified geometry — profiling showed the full 1:10m detail (~450K
+    # points worldwide) takes a repaint from ~15ms to 150-300ms at wide
+    # zoom, which is what made panning feel laggy at those scales.
+    COARSE_RENDER_THRESHOLD_PPD = 30
+
+    # Ceiling on how far fit_to_vessels()/wheel-zoom can zoom in — without
+    # this, a cluster of vessels at (near-)identical positions would drive
+    # pixels_per_degree towards infinity.
+    MAX_PIXELS_PER_DEGREE = 5_000_000
 
     # Points north (up) before rotation — QPainter.rotate() is clockwise,
     # matching compass bearings, so rotating by heading/COG degrees directly
@@ -59,6 +86,13 @@ class MapPanel(QWidget):
     ATON_HALF_SIZE = 6
     SAFETY_MARK_RADIUS = 6
     SAFETY_MARK_COLOR = QColor(255, 60, 60)
+
+    # A vivid magenta for a pinned SART/MOB/EPIRB — distinct from both the
+    # normal alarm red (always high-visibility) and the gold used for
+    # pinned vessels, so a pinned safety mark still reads unambiguously as
+    # "distress" while showing it's been pinned. (A pastel red was tried
+    # first but read as washed-out/low-contrast against the map.)
+    PINNED_SAFETY_MARK_COLOR = QColor(255, 0, 144)
 
     # Candidate label placements tried, in order, around each vessel marker
     # before giving up and suppressing the label (widest angle spread first
@@ -93,6 +127,15 @@ class MapPanel(QWidget):
         self.uk_towns = UkTownsService(uk_towns_path)
         self.uk_towns.load()
 
+        annotate_shore_distances(self.places.places, self.coastline, f"{places_path}.shore_distance.cache.json")
+        annotate_shore_distances(self.uk_towns.places, self.coastline, f"{uk_towns_path}.shore_distance.cache.json")
+
+        self.show_place_names = True
+        self.coastal_towns_only = False
+        self.coastal_threshold_nm = 5.0
+
+        self._build_places_index()
+
         self.center_lat = self.DEFAULT_CENTER_LAT
         self.center_lon = self.DEFAULT_CENTER_LON
 
@@ -115,7 +158,7 @@ class MapPanel(QWidget):
         self.label_offsets = {}
 
         self._drag_start = None
-        self._drag_origin = None
+        self._drag_last = None
 
         self.zoom_in_button = self._make_zoom_button("+")
         self.zoom_out_button = self._make_zoom_button("−")
@@ -146,6 +189,61 @@ class MapPanel(QWidget):
         )
 
         return button
+
+    def _build_places_index(self):
+
+        self._all_places = self.places.places + self.uk_towns.places
+
+        self._places_grid = {}
+
+        for place in self._all_places:
+
+            key = (
+                int(place["lon"] // self.PLACE_GRID_SIZE_DEGREES),
+                int(place["lat"] // self.PLACE_GRID_SIZE_DEGREES)
+            )
+
+            self._places_grid.setdefault(key, []).append(place)
+
+    def _places_in_bounds(self, min_lon, max_lon, min_lat, max_lat):
+
+        result = []
+
+        gx0 = int(min_lon // self.PLACE_GRID_SIZE_DEGREES)
+        gx1 = int(max_lon // self.PLACE_GRID_SIZE_DEGREES)
+        gy0 = int(min_lat // self.PLACE_GRID_SIZE_DEGREES)
+        gy1 = int(max_lat // self.PLACE_GRID_SIZE_DEGREES)
+
+        for gx in range(gx0, gx1 + 1):
+            for gy in range(gy0, gy1 + 1):
+                result.extend(self._places_grid.get((gx, gy), []))
+
+        return result
+
+    def set_show_place_names(self, show):
+
+        self.show_place_names = show
+
+        self.update()
+
+    def set_coastal_filter(self, enabled, threshold_nm):
+
+        self.coastal_towns_only = enabled
+        self.coastal_threshold_nm = threshold_nm
+
+        self.update()
+
+    def _marker_color(self, vessel):
+
+        # SART/MOB/EPIRB use their own fixed alarm-red/pinned-magenta pair
+        # rather than the configurable vessel colors — computed here once
+        # so every place a vessel's color is needed (marker, track) agrees,
+        # rather than each place re-deriving it and risking drifting apart
+        # (which is exactly how the original pinned-SART bug happened).
+        if vessel.station_type in ("sart", "mob", "epirb"):
+            return self.PINNED_SAFETY_MARK_COLOR if vessel.pinned else self.SAFETY_MARK_COLOR
+
+        return self.pinned_color if vessel.pinned else self.vessel_color
 
     def resizeEvent(self, event):
 
@@ -241,9 +339,40 @@ class MapPanel(QWidget):
         # without cropping either dimension.
         self.pixels_per_degree = min(scale_lat, scale_lon)
 
+    def fit_to_vessels(self):
+
+        positioned = [v for v in self.vessels if v.lat is not None and v.lon is not None]
+
+        if not positioned:
+            return
+
+        min_lat = min(v.lat for v in positioned)
+        max_lat = max(v.lat for v in positioned)
+        min_lon = min(v.lon for v in positioned)
+        max_lon = max(v.lon for v in positioned)
+
+        self.center_lat = max(-self.MAX_ABS_LATITUDE, min(self.MAX_ABS_LATITUDE, (min_lat + max_lat) / 2))
+        self.center_lon = (min_lon + max_lon) / 2
+
+        # 15% padding so targets aren't flush against the edge of the view.
+        # The span floor here only guards against division by zero when
+        # every vessel is at/near the exact same point — MAX_PIXELS_PER_DEGREE
+        # below is what actually stops that case zooming in to infinity, so
+        # a tight-but-real cluster (e.g. two vessels 0.01nm apart) can still
+        # zoom in as far as that cluster genuinely warrants.
+        lat_span = max((max_lat - min_lat) * 1.15, 1e-6)
+        lon_span = max((max_lon - min_lon) * 1.15, 1e-6)
+
+        scale_lat = self.height() / lat_span
+        scale_lon = self.width() / (lon_span * cos(radians(self.center_lat)))
+
+        self.pixels_per_degree = min(scale_lat, scale_lon, self.MAX_PIXELS_PER_DEGREE)
+
+        self.update()
+
     def set_center(self, lat, lon):
 
-        self.center_lat = lat
+        self.center_lat = max(-self.MAX_ABS_LATITUDE, min(self.MAX_ABS_LATITUDE, lat))
         self.center_lon = lon
 
         self.update()
@@ -304,7 +433,12 @@ class MapPanel(QWidget):
 
         min_lon, max_lon, min_lat, max_lat = self.visible_bounds()
 
-        for ring in self.coastline.rings:
+        if self.pixels_per_degree < self.COARSE_RENDER_THRESHOLD_PPD:
+            visible_rings = self.coastline.coarse_rings_in_bounds(min_lon, max_lon, min_lat, max_lat)
+        else:
+            visible_rings = self.coastline.rings_in_bounds(min_lon, max_lon, min_lat, max_lat)
+
+        for ring in visible_rings:
 
             if (
                 ring["max_lon"] < min_lon or ring["min_lon"] > max_lon
@@ -398,18 +532,12 @@ class MapPanel(QWidget):
 
         pixels_per_unit = pixels_per_nm / NM_PER_UNIT.get(self.distance_unit, 1.0)
 
-        max_bar_px = 150
-
-        value = self.SCALE_STEPS_NM[0]
-
-        for step in self.SCALE_STEPS_NM:
-
-            if step * pixels_per_unit > max_bar_px:
-                break
-
-            value = step
-
-        bar_px = value * pixels_per_unit
+        # Fixed on-screen length — like a ruler, not a Google-Maps-style bar
+        # that snaps to round numbers. The value it represents is computed
+        # directly from the current scale and always shown to the precision
+        # that's actually meaningful (more decimal places at deep zoom).
+        bar_px = self.width() * self.SCALE_BAR_WIDTH_FRACTION
+        value = bar_px / pixels_per_unit
 
         x0 = 15
         y0 = self.height() - 15
@@ -417,18 +545,33 @@ class MapPanel(QWidget):
         painter.setPen(QPen(self.SCALE_BAR_COLOR, 2))
 
         painter.drawLine(QPointF(x0, y0), QPointF(x0 + bar_px, y0))
-        painter.drawLine(QPointF(x0, y0 - 4), QPointF(x0, y0 + 4))
-        painter.drawLine(QPointF(x0 + bar_px, y0 - 4), QPointF(x0 + bar_px, y0 + 4))
+
+        for i in range(self.SCALE_BAR_TICKS + 1):
+
+            x = x0 + bar_px * i / self.SCALE_BAR_TICKS
+
+            # Taller ticks at the two ends, shorter at the interior
+            # subdivisions, so the bar reads like a ruler at a glance.
+            tick_half_height = 5 if i in (0, self.SCALE_BAR_TICKS) else 3
+
+            painter.drawLine(QPointF(x, y0 - tick_half_height), QPointF(x, y0 + tick_half_height))
 
         unit_suffix = UNIT_SUFFIX.get(self.distance_unit, self.distance_unit)
+
+        # More decimal places once the value drops below 1 — "0 nm" at deep
+        # zoom would be worse than useless.
+        decimals = 0 if value >= 10 else (1 if value >= 1 else 2)
 
         font = painter.font()
         font.setPointSize(8)
         painter.setFont(font)
 
-        painter.drawText(QPointF(x0, y0 - 8), f"{value:g} {unit_suffix}")
+        painter.drawText(QPointF(x0, y0 - 10), f"{value:.{decimals}f} {unit_suffix}")
 
     def draw_places(self, painter):
+
+        if not self.show_place_names:
+            return
 
         zoom = self.current_zoom_level()
 
@@ -446,12 +589,18 @@ class MapPanel(QWidget):
         # Filter to the viewport BEFORE ranking — a global "min_zoom
         # eligible" cutoff can still mean thousands of towns worldwide once
         # zoomed in a moderate amount, most of them nowhere near what's on
-        # screen. Only rank/cap among what's actually in view.
+        # screen. Only rank/cap among what's actually in view. The grid
+        # lookup narrows the candidate pool before this precise check runs,
+        # so this doesn't re-scan every place worldwide on every repaint.
         in_view = [
-            place for place in self.places.places + self.uk_towns.places
+            place for place in self._places_in_bounds(min_lon, max_lon, min_lat, max_lat)
             if place["min_zoom"] <= zoom
             and min_lat <= place["lat"] <= max_lat
             and min_lon <= place["lon"] <= max_lon
+            and (
+                not self.coastal_towns_only
+                or place.get("shore_distance_nm", FAR_SHORE_DISTANCE_NM) <= self.coastal_threshold_nm
+            )
         ]
 
         # More prominent places (lower min_zoom) get first claim, both on
@@ -493,7 +642,7 @@ class MapPanel(QWidget):
 
             if len(track) >= 2:
 
-                track_color = QColor(self.pinned_color if vessel.pinned else self.vessel_color)
+                track_color = QColor(self._marker_color(vessel))
                 track_color.setAlpha(210)
                 painter.setPen(QPen(track_color, 2))
 
@@ -527,7 +676,7 @@ class MapPanel(QWidget):
             if not self.rect().contains(point.toPoint()):
                 continue
 
-            vessel_color = self.pinned_color if vessel.pinned else self.vessel_color
+            vessel_color = self._marker_color(vessel)
 
             # A ring around the marker, independent of fill color, so a
             # pinned vessel is still distinguishable from a normal one
@@ -576,7 +725,11 @@ class MapPanel(QWidget):
                 # A distress-alarm cross-in-circle, in a fixed high-visibility
                 # color rather than the configurable vessel colors — these are
                 # safety-critical and should stand out regardless of theme.
-                painter.setPen(QPen(self.SAFETY_MARK_COLOR, 2))
+                # Pinning still shifts it to a distinct magenta (rather than
+                # the gold used for pinned vessels) so it never stops reading
+                # as a distress mark. vessel_color already carries this via
+                # _marker_color(), same as every other marker type.
+                painter.setPen(QPen(vessel_color, 2))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 r = self.SAFETY_MARK_RADIUS
                 painter.drawEllipse(point, r, r)
@@ -683,19 +836,27 @@ class MapPanel(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
 
             self._drag_start = event.position()
-            self._drag_origin = (self.center_lat, self.center_lon)
+            self._drag_last = event.position()
 
     def mouseMoveEvent(self, event):
 
         if self._drag_start is None:
             return
 
-        delta = event.position() - self._drag_start
+        pos = event.position()
+        delta = pos - self._drag_last
+        self._drag_last = pos
 
-        lat0, lon0 = self._drag_origin
+        # Each step uses the *current* center_lat for the cos(lat) factor —
+        # not a value frozen at drag-start — so this stays consistent with
+        # every render path (project()/paintEvent/visible_bounds all use the
+        # live center_lat too). Freezing it at drag-start let the map
+        # visibly slip relative to the cursor on any drag that also crossed
+        # a meaningful change in latitude.
+        self.center_lon -= delta.x() / (self.pixels_per_degree * cos(radians(self.center_lat)))
 
-        self.center_lon = lon0 - delta.x() / (self.pixels_per_degree * cos(radians(lat0)))
-        self.center_lat = lat0 + delta.y() / self.pixels_per_degree
+        new_lat = self.center_lat + delta.y() / self.pixels_per_degree
+        self.center_lat = max(-self.MAX_ABS_LATITUDE, min(self.MAX_ABS_LATITUDE, new_lat))
 
         self.update()
 

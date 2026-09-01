@@ -34,6 +34,10 @@ class SettingsService:
         "vessel_timeout": "10",
         "track_length": "10",
 
+        "show_place_names": True,
+        "coastal_towns_only": False,
+        "coastal_threshold_nm": "5",
+
         "last_replay_folder": "",
         "show_stale_targets": False,
 

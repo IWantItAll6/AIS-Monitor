@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QComboBox,
+    QCheckBox,
     QDialogButtonBox,
     QFileDialog,
     QColorDialog
@@ -98,6 +99,38 @@ class PreferencesDialog(QDialog):
         units_form.addRow("Distance", self.distance_unit)
 
         layout.addLayout(units_form)
+
+        layout.addSpacing(10)
+
+        #
+        # Map
+        #
+
+        map_title = QLabel("Map")
+
+        font = map_title.font()
+        font.setBold(True)
+
+        map_title.setFont(font)
+
+        layout.addWidget(map_title)
+
+        map_form = QFormLayout()
+
+        self.coastal_towns_only = QCheckBox("Only show towns near the coast")
+        self.coastal_towns_only.toggled.connect(
+            lambda checked: self.coastal_threshold_nm.setEnabled(checked)
+        )
+
+        map_form.addRow(self.coastal_towns_only)
+
+        self.coastal_threshold_nm = QComboBox()
+        self.coastal_threshold_nm.setEditable(True)
+        self.coastal_threshold_nm.addItems(["1", "2", "5", "10", "20"])
+
+        map_form.addRow("Coastal Threshold (nm)", self.coastal_threshold_nm)
+
+        layout.addLayout(map_form)
 
         layout.addSpacing(10)
 
@@ -206,6 +239,10 @@ class PreferencesDialog(QDialog):
 
         self.distance_unit.setCurrentText(self.settings["distance_unit"])
 
+        self.coastal_towns_only.setChecked(self.settings["coastal_towns_only"])
+        self.coastal_threshold_nm.setCurrentText(self.settings["coastal_threshold_nm"])
+        self.coastal_threshold_nm.setEnabled(self.settings["coastal_towns_only"])
+
         self.vessel_color = self.settings["vessel_color"]
         self.set_swatch(self.vessel_color_button, self.vessel_color)
 
@@ -222,6 +259,9 @@ class PreferencesDialog(QDialog):
         self.settings["theme"] = self.theme.currentText()
 
         self.settings["distance_unit"] = self.distance_unit.currentText()
+
+        self.settings["coastal_towns_only"] = self.coastal_towns_only.isChecked()
+        self.settings["coastal_threshold_nm"] = self.coastal_threshold_nm.currentText()
 
         self.settings["vessel_color"] = self.vessel_color
         self.settings["pinned_color"] = self.pinned_color

@@ -20,6 +20,12 @@ data/settings.json
 # Natural Earth shapefiles — see services/coastline_service.py.
 data/naturalearth/**/*.cache.json
 
+# Nearest-shore distance per UK town, regenerated from the committed
+# GeoNames data + coastline — see services/shore_distance_service.py.
+# (The Natural Earth places' equivalent cache already matches the pattern
+# above, since it also ends in .cache.json.)
+data/geonames/**/*.shore_distance.cache.json
+
 # Live session recordings — user-generated data, not source.
 data/recordings/
 
