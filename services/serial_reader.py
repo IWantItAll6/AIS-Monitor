@@ -46,7 +46,12 @@ class SerialReaderThread(QThread):
         # — before any test's monkeypatch of serial.Serial could apply.
         self.serial_factory = serial_factory or serial.Serial
 
-        self._running = False
+        # Written only by stop() (main thread), read only by run() (this
+        # thread's own run loop) — run() must never write to this, or a
+        # stop() call arriving while serial_factory(...) is still (slowly)
+        # opening the port gets silently clobbered the instant run()
+        # resumes, starting the read loop anyway despite the stop request.
+        self._stop_requested = False
 
     def run(self):
 
@@ -66,9 +71,7 @@ class SerialReaderThread(QThread):
             self.error_occurred.emit(str(e))
             return
 
-        self._running = True
-
-        while self._running:
+        while not self._stop_requested:
 
             try:
                 raw = connection.readline()
@@ -89,7 +92,7 @@ class SerialReaderThread(QThread):
 
     def stop(self):
 
-        self._running = False
+        self._stop_requested = True
 
         self.wait(2000)
 

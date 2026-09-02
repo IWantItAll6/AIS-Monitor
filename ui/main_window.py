@@ -111,14 +111,22 @@ class MainWindow(QMainWindow):
         self.target_tree.itemDoubleClicked.connect(self.on_vessel_double_clicked)
         self.map_view.vessel_clicked.connect(self.on_map_vessel_clicked)
         self.map_view.vessel_double_clicked.connect(self.toggle_vessel_pin)
-        self.exit_replay_action.triggered.connect(self.exit_replay)
+        # exit_replay_action is already connected in create_toolbar() —
+        # connecting it again here was a duplicate, making every Exit
+        # Replay click run exit_replay() twice.
 
         self.replay.filename = None
 
+        # Single-shot, not repeating: each firing reschedules itself for a
+        # different delay (the real gap to the next timestamp — see
+        # replay_next_line), rather than ticking at one fixed interval.
         self.replay_timer = QTimer()
         self.replay_timer.setSingleShot(True)
 
         self.replay_timer.timeout.connect(self.replay_next_line)
+
+        # Set by pause_clicked(), consumed by start_clicked() — see there.
+        self._paused_remaining_ms = None
 
         self.last_ais_mmsi = None
 
@@ -495,8 +503,29 @@ class MainWindow(QMainWindow):
         self.seen_timer.start(1000)
 
         if self.replay.filename:
+
+            # Checked before current_mode is overwritten below. Gating on
+            # "was actually Paused", not just "is there a leftover
+            # _paused_remaining_ms value", matters because pause_clicked()
+            # isn't the only way out of Paused — e.g. clicking Stop instead
+            # of Start would otherwise leave a stale remaining-time value
+            # that a later, unrelated Start could wrongly resume with.
+            resuming_from_pause = self.current_mode == "Paused" and self._paused_remaining_ms is not None
+
             self.current_mode = "Replay"
-            self.replay_next_line()
+
+            if resuming_from_pause:
+                # Pick up the real-time gap to the next batch where it left
+                # off, rather than replaying that batch instantly — an
+                # instant resume would silently fast-forward through
+                # however much of the wait was left, undermining "1x means
+                # real time" for exactly the case (pausing) most likely to
+                # leave time pending.
+                self.replay_timer.start(max(1, self._paused_remaining_ms))
+                self._paused_remaining_ms = None
+
+            else:
+                self.replay_next_line()
 
         else:
             self.current_mode = "Live"
@@ -589,7 +618,16 @@ class MainWindow(QMainWindow):
 
     def pause_clicked(self):
 
+        # Captured before stop() cancels it — QTimer.remainingTime() is
+        # -1/0 once stopped, so this has to happen first. Consumed by
+        # start_clicked() to resume the real-time wait where it left off,
+        # instead of instantly playing whatever batch was pending.
+        self._paused_remaining_ms = (
+            self.replay_timer.remainingTime() if self.replay_timer.isActive() else None
+        )
+
         self.replay_timer.stop()
+        self.scrub_timer.stop()
         self.seen_timer.stop()
         self.stop_live_serial()
 
@@ -604,6 +642,13 @@ class MainWindow(QMainWindow):
     def stop_clicked(self):
 
         self.replay_timer.stop()
+
+        # Otherwise a scrub animation in progress (see start_scrub_animation)
+        # keeps firing after Stop, still calling process_sentence() on the
+        # lines it was mid-way through — same class of bug as the one fixed
+        # in clear_clicked() below: a stale timer surviving a reset and
+        # silently continuing to advance/repopulate the session.
+        self.scrub_timer.stop()
 
         self.seen_timer.stop()
 
@@ -621,9 +666,17 @@ class MainWindow(QMainWindow):
 
     def clear_clicked(self):
 
+        # Deliberately does NOT touch replay position/timer, unlike
+        # Stop — Clear wipes displayed session data while leaving an
+        # active Live or Replay session running, same as it already leaves
+        # live serial reading untouched. It used to also call
+        # self.replay.reset(), which — since clear_action stays enabled
+        # during active replay, unlike start/pause/stop — silently rewound
+        # a running replay's position without stopping its pending timer,
+        # so it would keep ticking and immediately restart playback from
+        # the beginning right after a Clear mid-replay.
         self.reset_session()
         self.raw_data.clear()
-        self.replay.reset()
 
     def faster_clicked(self):
 
@@ -640,8 +693,9 @@ class MainWindow(QMainWindow):
     def replay_next_line(self):
 
         # Also the landing spot for "ran out of lines" after a batch below
-        # (rather than duplicating this block there): the next call in
-        # naturally lands back here with has_next() now false.
+        # (rather than duplicating this block there): that schedules an
+        # essentially-immediate next call, which lands back here with
+        # has_next() now false.
         if not self.replay.has_next():
 
             self.replay.reset()
@@ -842,6 +896,16 @@ class MainWindow(QMainWindow):
 
                 range_text = format_distance(rng, self.settings.get("distance_unit", "NM"))
                 bearing_text = f"{brg:.0f}°"
+
+            else:
+                # Otherwise vessel.range/bearing keep their last-known
+                # value indefinitely once the GNSS fix drops — the
+                # displayed cell correctly goes blank, but the tree's own
+                # Range-column sort order (and MapPanel's map-label
+                # priority, which also reads vessel.range) would still be
+                # silently ranking by stale data instead of "unknown".
+                vessel.range = None
+                vessel.bearing = None
 
             seen_text = self.format_seen(vessel)
 
@@ -1671,6 +1735,16 @@ class MainWindow(QMainWindow):
         fresh.name = name
         fresh.pinned = True
 
+        # Vessel.last_seen defaults to real wall-clock time (see
+        # models/vessel.py), but during replay every other "Seen" age is
+        # computed against self.replay.current_time — a simulated clock
+        # that can be months away from the real one. Without this, a
+        # pinned vessel survives Clear only to immediately show a bogus
+        # Seen value (a huge, wrapped-looking number) until its next
+        # actual report corrects it. Same live-vs-replay fallback already
+        # used in parsers/ais_parser.py.
+        fresh.last_seen = self.replay.current_time or datetime.now()
+
     def check_vessel_timeouts(self):
 
         if self.replay.current_time is None:
@@ -1696,8 +1770,6 @@ class MainWindow(QMainWindow):
                 expired.append(mmsi)
 
         for mmsi in expired:
-            print(f"Timed out vessel {mmsi}")
-
             del self.registry.vessels[mmsi]
 
     def trim_vessel_tracks(self):

@@ -146,17 +146,30 @@ HELP_HTML = """
 <h3>Modes</h3>
 <p>
 <b>Live</b> mode reads from a serial AIS receiver (and optionally a separate
-GNSS receiver) configured under <b>Settings &gt; Communications</b>.
+GNSS receiver) configured under <b>Settings &gt; Communications</b>. Every
+live session is automatically recorded to disk in the same format Replay
+reads (see <b>Recording</b> below), so it can be played back later.
 <b>Replay</b> mode plays back a previously captured log file instead —
-use <b>File &gt; Open Replay...</b> to load one. Once a replay file is
-loaded, <b>Start</b> plays it back; <b>Slower</b>/<b>Faster</b> change the
-playback speed, and <b>Exit Replay</b> returns to live mode.
+use <b>File &gt; Open Replay...</b> to load one, or <b>File &gt; Load
+Sample Data</b> to try the app immediately with a bundled example, no
+receiver required. Once a replay file is loaded, <b>Start</b> plays it
+back; <b>Slower</b>/<b>Faster</b> change the playback speed, and <b>Exit
+Replay</b> returns to live mode.
+</p>
+<p>
+At <b>1x</b>, replay matches the file's own recorded timing — a 10-second
+gap between two messages plays back over roughly 10 real seconds, and
+several sentences logged at the exact same instant (common with real
+receiver output) always play together rather than being spread out.
+<b>Slower</b>/<b>Faster</b> scale that real-time pacing up or down.
 </p>
 <p>
 Drag the scrubber in the toolbar to jump to a different point in a loaded
 replay. A large <b>Catching up…</b> badge appears on the map briefly while
 it replays the skipped span in the background, so tracks and vessel state
-arrive at the same point they'd be at if you'd played through normally.
+arrive at the same point they'd be at if you'd played through normally —
+uncheck <b>Animate on drop</b> next to the scrubber to jump straight there
+instead.
 </p>
 <p>
 <b>Pause</b> halts processing without losing the current session. <b>Stop</b>
@@ -170,7 +183,8 @@ ready to pick up fresh readings.
 <p>
 Each row is a tracked vessel. Click a row to select it and see its full
 details below the list. Double-click a row to center the map on that
-vessel without changing the current zoom level.
+vessel without changing the current zoom level. Type in the search box
+above the list to filter it by MMSI or name.
 </p>
 <p>
 Click the star column to <b>pin</b> a vessel — pinned vessels always sort to
@@ -179,8 +193,17 @@ immune to the normal timeout that otherwise removes vessels that haven't
 been heard from recently, and show up gold instead of orange on the map.
 </p>
 <p>
-Use <b>View &gt; Select Columns</b> to show or hide individual columns —
-your choices are remembered between sessions.
+Use <b>View &gt; Select Columns</b> to show or hide individual columns in
+the list, and <b>View &gt; Vessel Detail Fields</b> to do the same for the
+detail panel below it (including fields not shown by default, like
+destination, draught, IMO number, rate of turn, length, and beam) — both
+sets of choices are remembered between sessions. <b>RSSI</b> (received
+signal strength) only populates for compatible receiver hardware that
+reports it.
+</p>
+<p>
+<b>File &gt; Export</b> saves a screenshot of the whole window, or the
+current target list, to a file.
 </p>
 
 <h3>The Map</h3>
@@ -222,6 +245,14 @@ GNSS, RSSI, or anything else) — this only affects what's shown, not what's
 processed.
 </p>
 
+<h3>Recording</h3>
+<p>
+Live sessions are recorded automatically to the <b>Recordings Folder</b>
+set in <b>Preferences</b> — nothing is ever deleted automatically, so if
+that folder grows large, a one-time warning appears (its size threshold,
+or turning the warning off entirely, is also set there).
+</p>
+
 <h3>Settings</h3>
 <p>
 <b>Communications</b> configures the AIS (and optional separate GNSS)
@@ -250,9 +281,11 @@ configured independently here, since combined and split receiver setups
 sometimes use different formats.
 </p>
 <p>
-<b>Preferences</b> sets the app's light/dark theme, how long a vessel can
-go unheard-from before it's removed from the list, and how much track
-history is kept per vessel.
+<b>Preferences</b> sets the app's light/dark theme, the vessel and pinned
+marker colors, distance units (nautical miles, miles, or km — used
+throughout the target list, detail panel, and map scale bar), how long a
+vessel can go unheard-from before it's removed from the list, how much
+track history is kept per vessel, and the recording settings above.
 </p>
 
 <h3>Keyboard Shortcuts</h3>
@@ -264,6 +297,7 @@ history is kept per vessel.
 <li><b>Ctrl+G</b> — Center map on GNSS fix</li>
 <li><b>Ctrl+End</b> — Skip to end of replay</li>
 <li><b>Ctrl+=</b> / <b>Ctrl+-</b> — Zoom map in/out</li>
+<li><b>Ctrl+0</b> — Zoom to fit all targets</li>
 <li><b>Ctrl+O</b> — Open Replay...</li>
 </ul>
 """

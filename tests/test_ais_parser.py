@@ -1,7 +1,8 @@
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import parsers.ais_parser as ais_parser_module
-from parsers.ais_parser import AISParser
+from parsers.ais_parser import AISParser, FRAGMENT_TIMEOUT_SECONDS
 from services.vessel_registry import VesselRegistry
 
 
@@ -68,6 +69,52 @@ def test_multipart_message_assembled_across_calls_real_sentences():
     assert vessel is not None
     assert vessel.callsign == "MNLK4"
     assert vessel.type == "PilotVessel"
+
+
+def test_stale_fragment_buffer_is_pruned_not_kept_forever():
+
+    # Found in review: pending_fragments had no expiry, so a permanently
+    # dropped fragment left its (channel, seq_id) slot jammed forever —
+    # seq_id only ranges 0-9, so it's expected to be reused by later,
+    # unrelated messages.
+    parser = make_parser()
+
+    old_time = datetime(2026, 1, 1, 12, 0, 0)
+
+    assert parser.assemble("!AIVDM,3,1,5,A,AAA,0*00", old_time) is None
+    assert ("A", "5") in parser.pending_fragments
+
+    later_time = old_time + timedelta(seconds=FRAGMENT_TIMEOUT_SECONDS + 1)
+
+    frag1 = "!AIVDM,2,1,5,A,BBB,0*00"
+    frag2 = "!AIVDM,2,2,5,A,CCC,0*00"
+
+    assert parser.assemble(frag1, later_time) is None
+    assert parser.assemble(frag2, later_time) == [frag1, frag2]
+
+
+def test_reused_seq_id_with_mismatched_fragments_is_discarded_not_spliced():
+
+    # Found in review: without checking that the assembled fragment
+    # numbers are actually 1..total (not just that there are `total` of
+    # them), a dropped fragment plus seq_id reuse could silently splice
+    # together fragments from two unrelated messages into one decode()
+    # call.
+    parser = make_parser()
+
+    t = datetime(2026, 1, 1, 12, 0, 0)
+
+    # Old 3-part message: fragment 2 never arrives (dropped).
+    assert parser.assemble("!AIVDM,3,1,5,A,OLD1,0*00", t) is None
+    assert parser.assemble("!AIVDM,3,3,5,A,OLD3,0*00", t) is None
+
+    # New, unrelated 2-part message reuses the same (channel, seq_id) —
+    # its fragment 1 overwrites the old slot's fragment 1, coincidentally
+    # making len(parts) == 2 == the new message's total.
+    result = parser.assemble("!AIVDM,2,1,5,A,NEW1,0*00", t)
+
+    assert result is None
+    assert ("A", "5") not in parser.pending_fragments
 
 
 def test_ship_type_falls_back_to_raw_code_when_not_an_enum_member(monkeypatch):

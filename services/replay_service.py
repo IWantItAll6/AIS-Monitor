@@ -101,8 +101,11 @@ class ReplayService:
 
     def interval_ms(self, base_interval_ms):
 
-        # A 0ms QTimer interval fires as fast as the event loop allows
-        # rather than "instantly" — floor it at 1ms regardless of speed.
+        # base_interval_ms is normally a real elapsed-time gap from
+        # time_until_next_ms(), not a fixed constant — this just applies
+        # the speed multiplier to it. A 0ms QTimer interval fires as fast
+        # as the event loop allows rather than "instantly", so floor at
+        # 1ms regardless of speed.
         return max(1, int(base_interval_ms / self.speed))
 
     def progress(self):

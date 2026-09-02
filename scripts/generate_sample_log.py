@@ -240,6 +240,10 @@ def generate():
     sim_start = last_emitted[0] + timedelta(milliseconds=LINE_SPACING_MS)
     end_time = sim_start + timedelta(seconds=DURATION_SECONDS)
 
+    # seq is a tie-breaker: heapq compares tuples element-by-element, so
+    # without it, two events scheduled for the exact same time would fall
+    # through to comparing "ref" next — and a vessel dict has no ordering,
+    # which would crash.
     seq = count()
     heap = [
         (sim_start, next(seq), "gnss", None),

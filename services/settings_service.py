@@ -1,3 +1,4 @@
+import copy
 import json
 from pathlib import Path
 
@@ -89,18 +90,37 @@ class SettingsService:
     @classmethod
     def load(cls):
 
+        # deepcopy, not copy(): a shallow copy still shares DEFAULTS' own
+        # nested dicts (visible_columns, visible_detail_fields) by
+        # reference. main_window.py mutates those in place (e.g.
+        # settings.setdefault("visible_columns", {})[name] = visible), so
+        # on a fresh install (no settings.json yet) that would silently
+        # corrupt the class-level DEFAULTS for the rest of the process.
+        settings = copy.deepcopy(cls.DEFAULTS)
+
         try:
             with open(cls.SETTINGS_FILE, "r") as f:
                 data = json.load(f)
 
-            settings = cls.DEFAULTS.copy()
-            settings.update(data)
-
+        except FileNotFoundError:
             return settings
 
-        except FileNotFoundError:
+        for key, value in data.items():
 
-            return cls.DEFAULTS.copy()
+            # Merge nested dicts key-by-key rather than replacing them
+            # wholesale, so a settings.json saved before a new field was
+            # added to visible_columns/visible_detail_fields (e.g. RSSI)
+            # still picks up that field's documented default instead of
+            # silently losing it — the whole-dict-replace this replaced
+            # made an upgrading user see RSSI shown, not the intended
+            # hidden-by-default.
+            if isinstance(value, dict) and isinstance(settings.get(key), dict):
+                settings[key].update(value)
+
+            else:
+                settings[key] = value
+
+        return settings
 
     @classmethod
     def save(cls, settings):

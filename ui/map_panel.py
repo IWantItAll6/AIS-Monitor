@@ -84,6 +84,13 @@ class MapPanel(QWidget):
     # zoom-to-fit case (a 0.01nm-wide cluster needs roughly 25,000).
     MAX_SCALE = 1_000_000
 
+    # Floor for zoom_out()/wheel-zoom-out — without this, scale asymptotes
+    # towards (but never quite reaches) zero, and everything downstream
+    # that divides by it (pixels-per-nm, the scale bar) degrades towards
+    # meaningless values long before that. The whole ~21,600nm world
+    # circumference still spans a visible ~20px at this floor.
+    MIN_SCALE = 0.001
+
     # Points north (up) before rotation — QPainter.rotate() is clockwise,
     # matching compass bearings, so rotating by heading/COG degrees directly
     # points the bow the right way.
@@ -273,13 +280,13 @@ class MapPanel(QWidget):
 
     def zoom_in(self):
 
-        self.scale *= self.ZOOM_FACTOR
+        self.scale = min(self.scale * self.ZOOM_FACTOR, self.MAX_SCALE)
 
         self.update()
 
     def zoom_out(self):
 
-        self.scale /= self.ZOOM_FACTOR
+        self.scale = max(self.scale / self.ZOOM_FACTOR, self.MIN_SCALE)
 
         self.update()
 
@@ -839,10 +846,16 @@ class MapPanel(QWidget):
 
     def wheelEvent(self, event):
 
-        if event.angleDelta().y() > 0:
+        delta_y = event.angleDelta().y()
+
+        # A purely horizontal scroll (Shift+wheel, or a trackpad two-finger
+        # horizontal swipe) has delta_y == 0 — used to fall into the "else"
+        # branch below and zoom out, so a horizontal gesture silently
+        # zoomed instead of doing nothing.
+        if delta_y > 0:
             self.zoom_in()
 
-        else:
+        elif delta_y < 0:
             self.zoom_out()
 
     def mousePressEvent(self, event):

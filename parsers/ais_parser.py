@@ -45,6 +45,12 @@ def classify_station(mmsi, msg_type):
     return MMSI_PREFIX_STATION_TYPES.get(str(mmsi)[:3], "vessel")
 
 
+# Multi-part sentences normally complete within a couple of seconds;
+# anything still incomplete after this long is a permanently dropped
+# fragment (weak signal, interference), not a slow-arriving one.
+FRAGMENT_TIMEOUT_SECONDS = 10
+
+
 class AISParser:
 
     def __init__(self, registry):
@@ -54,9 +60,11 @@ class AISParser:
         # Multi-part messages (Type 5 static/voyage data — callsign, ship
         # type, destination — is almost always 2 fragments) need every
         # fragment passed to decode() together; buffer here until complete.
+        # Keyed by (channel, seq_id) -> {"parts": {frag_num: sentence},
+        # "first_seen": datetime}.
         self.pending_fragments = {}
 
-    def assemble(self, sentence):
+    def assemble(self, sentence, current_time=None):
 
         fields = sentence.split(",")
 
@@ -72,12 +80,31 @@ class AISParser:
         seq_id = fields[3]
         channel = fields[4]
 
+        now = current_time or datetime.now()
+
+        self._prune_stale_fragments(now)
+
         key = (channel, seq_id)
 
-        parts = self.pending_fragments.setdefault(key, {})
-        parts[frag_num] = sentence
+        entry = self.pending_fragments.setdefault(key, {"parts": {}, "first_seen": now})
+        entry["parts"][frag_num] = sentence
+
+        parts = entry["parts"]
 
         if len(parts) < total:
+            return None
+
+        # seq_id only ever ranges 0-9 (ITU-R M.1371), so it's expected to
+        # be reused across genuinely unrelated messages. Without this
+        # check, a dropped fragment leaving a stale entry behind could let
+        # a later, unrelated message's fragment(s) silently complete it —
+        # len(parts) == total by coincidence, but not with fragments 1..N
+        # all actually present — splicing two different messages (possibly
+        # from two different vessels) into one decode() call. Discarding
+        # and starting clean is safer than guessing which fragments belong
+        # together.
+        if set(parts.keys()) != set(range(1, total + 1)):
+            del self.pending_fragments[key]
             return None
 
         ordered = [parts[i] for i in range(1, total + 1)]
@@ -86,11 +113,25 @@ class AISParser:
 
         return ordered
 
+    def _prune_stale_fragments(self, now):
+
+        stale_keys = [
+            key for key, entry in self.pending_fragments.items()
+            if (now - entry["first_seen"]).total_seconds() > FRAGMENT_TIMEOUT_SECONDS
+        ]
+
+        for key in stale_keys:
+            del self.pending_fragments[key]
+
     def process(self, sentence, current_time):
 
         try:
 
-            fragments = self.assemble(sentence)
+            # Resolved before assemble() (which needs a real time to check
+            # fragment-buffer staleness against), not after.
+            current_time = current_time or datetime.now()
+
+            fragments = self.assemble(sentence, current_time)
 
             if fragments is None:
                 return None
@@ -103,8 +144,6 @@ class AISParser:
             # transceiver's own AIVDO echo decodes to.
             if not mmsi:
                 return None
-
-            current_time = current_time or datetime.now()
 
             vessel = self.registry.get_or_create(mmsi)
 
