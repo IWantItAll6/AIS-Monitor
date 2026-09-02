@@ -102,12 +102,10 @@ class MainWindow(QMainWindow):
 
         self.create_toolbar()
         self.selected_mmsi = None
-        self.replay_interval_ms = 100
         # self.add_test_targets()
         self.create_menu()
         self.replay_time = None
         self.replay.speed = 1
-        self.current_interval_ms = self.replay_interval_ms
 
         self.target_tree.itemClicked.connect(self.on_vessel_selected)
         self.target_tree.itemDoubleClicked.connect(self.on_vessel_double_clicked)
@@ -118,6 +116,7 @@ class MainWindow(QMainWindow):
         self.replay.filename = None
 
         self.replay_timer = QTimer()
+        self.replay_timer.setSingleShot(True)
 
         self.replay_timer.timeout.connect(self.replay_next_line)
 
@@ -497,7 +496,7 @@ class MainWindow(QMainWindow):
 
         if self.replay.filename:
             self.current_mode = "Replay"
-            self.replay_timer.start(self.current_interval_ms)
+            self.replay_next_line()
 
         else:
             self.current_mode = "Live"
@@ -632,24 +631,17 @@ class MainWindow(QMainWindow):
 
         self.speed_label.setText(f"{self.replay.speed}x")
 
-        self.update_replay_speed()
-
     def slower_clicked(self):
 
         self.replay.slow_down()
 
         self.speed_label.setText(f"{self.replay.speed}x")
 
-        self.update_replay_speed()
-
-    def update_replay_speed(self):
-
-        self.current_interval_ms = self.replay.interval_ms(self.replay_interval_ms)
-
-        self.replay_timer.setInterval(self.current_interval_ms)
-
     def replay_next_line(self):
 
+        # Also the landing spot for "ran out of lines" after a batch below
+        # (rather than duplicating this block there): the next call in
+        # naturally lands back here with has_next() now false.
         if not self.replay.has_next():
 
             self.replay.reset()
@@ -660,13 +652,28 @@ class MainWindow(QMainWindow):
 
             return
 
-        line = self.replay.next_line()
+        # A batch, not one line: several sentences sharing the exact same
+        # embedded timestamp (as real receivers do emit) should play back
+        # together, not be spread out one-per-tick.
+        for line in self.replay.next_batch():
+            self.process_sentence(line)
 
         self.replay_scrubber.setValue(self.replay.index)
 
-        self.process_sentence(line)
-
         self.raw_data.verticalScrollBar().setValue(self.raw_data.verticalScrollBar().maximum())
+
+        if self.replay.has_next():
+            # Real elapsed time to the next distinct timestamp, scaled by
+            # the current speed multiplier — this is what makes "1x" mean
+            # actual real-time playback instead of a fixed lines-per-second
+            # rate (see ReplayService.time_until_next_ms).
+            self.replay_timer.start(self.replay.interval_ms(self.replay.time_until_next_ms()))
+
+        else:
+            # Nothing left to time a wait against — let the next tick
+            # (fired essentially immediately) hit the has_next() guard
+            # above and stop cleanly.
+            self.replay_timer.start(1)
 
     def process_sentence(self, line):
 

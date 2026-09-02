@@ -42,11 +42,22 @@ def test_sample_replay_produces_expected_vessels(sample_result):
 
     window, _ = sample_result
 
-    # 3 fake vessels plus the synthetic own-ship AIVDO echo.
-    assert len(window.registry.vessels) == 4
+    # 4 fake vessels, a base station, 2 AtoNs, and a SART beacon, plus the
+    # synthetic own-ship AIVDO echo.
+    assert len(window.registry.vessels) == 9
 
     names = {v.name for v in window.registry.vessels.values() if v.name}
-    assert names == {"SAMPLE VESSEL ONE", "SAMPLE VESSEL TWO", "SAMPLE TUG THREE"}
+    assert names == {
+        "SAMPLE VESSEL ONE", "SAMPLE VESSEL TWO", "SAMPLE TUG THREE", "SAMPLE VESSEL FOUR",
+        "SAMPLE LIGHTHOUSE", "SAMPLE VIRTUAL MARK",
+    }
+
+    station_types = {v.mmsi: v.station_type for v in window.registry.vessels.values()}
+    assert station_types[2320000] == "base_station"
+    assert station_types[992320001] == "aton"
+    assert station_types[992320002] == "aton"
+    assert station_types[970000001] == "sart"
+    assert window.registry.get(992320002).virtual_aid is True
 
 
 def test_sample_replay_extracts_callsign_and_type(sample_result):
@@ -90,4 +101,4 @@ def test_skip_to_end_processes_the_whole_file_without_error(qapp):
 
     assert not window.replay.has_next()
     assert window.current_mode == "Stopped"
-    assert len(window.registry.vessels) == 4
+    assert len(window.registry.vessels) == 9
