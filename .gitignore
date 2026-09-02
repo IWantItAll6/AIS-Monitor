@@ -34,6 +34,10 @@ data/recordings/
 # at the moment it crashed.
 data/crash.log
 
+# PyInstaller build output (see AISMonitor.spec) — build it, don't commit it.
+build/
+dist/
+
 # Real field-test capture logs — can bake in a real receiver's test
 # location, so kept local rather than committed. See resources/README.md.
 # sample_replay.log is fully synthetic (see scripts/generate_sample_log.py)

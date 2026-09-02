@@ -1,0 +1,77 @@
+name: Build
+
+# PyInstaller can't cross-compile — a Windows exe has to be built on Windows,
+# a Linux binary on Linux — so this runs the same AISMonitor.spec on both
+# runner OSes and produces one archive per platform. Triggered manually
+# (Actions tab > Build > Run workflow) for testing, and automatically on any
+# "v*" tag push, where the archives are attached to a GitHub Release.
+#
+# Building via a fresh checkout (rather than a developer's local working
+# copy) also matters here: it guarantees only what's actually committed to
+# git ends up in the build — resources/ is gitignored except the public
+# sample_replay.log, so a private local field-test log sitting in a
+# developer's own resources/ folder can never accidentally get bundled.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: ubuntu-latest
+            name: linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # PySide6 on Linux needs the system X11/EGL/etc. libraries a desktop
+      # environment normally already has; the headless GitHub runner doesn't,
+      # so install the same ones the official Qt "linuxdeploy" docs list.
+      - name: Install Qt runtime libraries
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-xinerama0 libgl1
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build
+        run: pyinstaller AISMonitor.spec --noconfirm
+
+      - name: Package (Windows)
+        if: matrix.name == 'windows'
+        run: Compress-Archive -Path dist/AISMonitor -DestinationPath AISMonitor-windows.zip
+
+      - name: Package (Linux)
+        if: matrix.name == 'linux'
+        run: tar czf AISMonitor-linux.tar.gz -C dist AISMonitor
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AISMonitor-${{ matrix.name }}
+          path: AISMonitor-${{ matrix.name }}.${{ matrix.name == 'windows' && 'zip' || 'tar.gz' }}
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AISMonitor-${{ matrix.name }}.${{ matrix.name == 'windows' && 'zip' || 'tar.gz' }}

@@ -6,7 +6,7 @@ A desktop AIS and GNSS monitoring tool for tracking vessels from a live serial r
 
 ## Status
 
-Actively developed, pre-v1. Replay mode, mapping, and the target list are solid and covered by an automated test suite. Live serial mode is implemented but has not yet been validated against real AIS/GNSS hardware — see [Contributing](#contributing) if you'd like to help test it.
+Actively developed, pre-v1. Replay mode, mapping, and the target list are solid and covered by an automated test suite. Live serial mode has been validated against real AIS/GNSS receiver hardware, with no issues seen during testing.
 
 ## Features
 
@@ -24,7 +24,11 @@ Actively developed, pre-v1. Replay mode, mapping, and the target list are solid 
 - Python 3.10 or newer (developed and tested with 3.12)
 - Dependencies listed in `requirements.txt`: PySide6, pyserial, pyais, pynmea2, pyshp, pytest
 
-## Setup
+## Download
+
+Pre-built Windows and Linux builds are attached to each [Release](https://github.com/IWantItAll6/AIS-Monitor/releases) — no Python install required. Unzip/untar and run the `AISMonitor` executable; it's portable (settings and recordings are stored next to it, not system-wide).
+
+## Setup (from source)
 
 ```bash
 python -m venv .venv
@@ -67,7 +71,7 @@ Some tests are skipped automatically if you don't have private field-test logs i
 
 ## Contributing
 
-Live-serial mode (`services/serial_reader.py`) is implemented and unit-tested against a fake serial connection, but has not yet been exercised against real AIS/GNSS hardware. If you have a receiver to test against, reports (or fixes) for anything that doesn't work as expected are welcome.
+Found a bug or have a feature request? Open an [issue](https://github.com/IWantItAll6/AIS-Monitor/issues) — there are templates for both.
 
 ## License
 

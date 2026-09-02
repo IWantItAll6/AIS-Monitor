@@ -4,3 +4,4 @@ pyais
 pynmea2
 pyshp
 pytest
+pyinstaller

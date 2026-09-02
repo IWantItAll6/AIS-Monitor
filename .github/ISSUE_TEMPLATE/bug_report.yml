@@ -1,0 +1,50 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Live serial mode
+        - Replay mode
+        - Not mode-specific
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: If you can reliably trigger it, list the steps. A snippet of the relevant log line(s) (from Raw Data or a recording under data/recordings/) is especially useful for parsing bugs.
+    validations:
+      required: false
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: e.g. Windows 11, Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: AIS Monitor version
+      description: Help > About
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Crash log
+      description: If the app crashed, paste the relevant entry from data/crash.log here.
+      render: text
+    validations:
+      required: false
