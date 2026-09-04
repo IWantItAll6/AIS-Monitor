@@ -90,9 +90,17 @@ class SerialReaderThread(QThread):
 
         connection.close()
 
-    def stop(self):
+    def request_stop(self):
+        """Signal the run loop to exit without blocking the caller — split
+        out from stop() so a caller stopping several readers can request
+        all of them stop before waiting on any, instead of paying each
+        reader's full shutdown latency serially (see stop_live_serial())."""
 
         self._stop_requested = True
+
+    def stop(self):
+
+        self.request_stop()
 
         self.wait(2000)
 

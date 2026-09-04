@@ -589,8 +589,15 @@ class MainWindow(QMainWindow):
 
     def stop_live_serial(self):
 
+        # Signal every reader to stop before blocking on any of them —
+        # reader.stop() itself blocks the calling (GUI) thread up to 2s, and
+        # calling it in a loop paid that up to once per reader (up to ~4s
+        # with separate GNSS enabled) instead of overlapping their shutdowns.
         for reader in self.serial_readers:
-            reader.stop()
+            reader.request_stop()
+
+        for reader in self.serial_readers:
+            reader.wait(2000)
 
         self.serial_readers = []
 
@@ -1700,6 +1707,26 @@ class MainWindow(QMainWindow):
         self.last_ais_mmsi = None
         self.own_track = deque()
 
+        # A fresh dict, not a mutation — self.own_position may still be the
+        # same object GNSSParser handed back from process(), and reassigning
+        # (rather than clearing it in place) avoids any risk of stepping on
+        # that. Without this, a GNSS fix from before Clear/a replay-file-load
+        # kept being reported as the current position (see record_own_position)
+        # until the next real fix happened to arrive.
+        self.own_position = {"lat": None, "lon": None, "fix": False}
+
+        # The previously-selected vessel may no longer exist after this
+        # reset (registry entries are wiped except pinned ones) — clearing
+        # this alongside the detail panel keeps them in sync, matching
+        # check_vessel_timeouts() below.
+        self.selected_mmsi = None
+
+        self.clear_vessel_details()
+
+        self.update_target_tree()
+
+    def clear_vessel_details(self):
+
         self.detail_mmsi.setText("-")
         self.detail_name.setText("-")
         self.detail_callsign.setText("-")
@@ -1720,8 +1747,6 @@ class MainWindow(QMainWindow):
         self.detail_rot.setText("-")
         self.detail_length.setText("-")
         self.detail_beam.setText("-")
-
-        self.update_target_tree()
 
     def reset_vessel_data(self, vessel):
 
@@ -1771,6 +1796,15 @@ class MainWindow(QMainWindow):
 
         for mmsi in expired:
             del self.registry.vessels[mmsi]
+
+        # Otherwise the details panel keeps showing the timed-out vessel's
+        # last values forever — update_target_tree()'s selected-vessel
+        # refresh (below) finds nothing in the registry for a stale
+        # selected_mmsi and just no-ops, leaving the last-rendered text in
+        # place with no corresponding tree row selected.
+        if self.selected_mmsi in expired:
+            self.selected_mmsi = None
+            self.clear_vessel_details()
 
     def trim_vessel_tracks(self):
 

@@ -56,3 +56,19 @@ def test_clear_keeps_pinned_vessel_seen_on_replays_own_clock(qapp):
     assert survived.pinned is True
     assert survived.last_seen == window.replay.current_time
     assert window.format_seen(survived) == "0s"
+
+
+def test_clear_resets_a_stale_gnss_fix(qapp):
+
+    # Found in review: own_position was never reset on Clear (or on
+    # loading a new replay file, which also goes through reset_session()),
+    # so a GNSS fix from before the reset kept being reported as the
+    # current position — range/bearing to every vessel and the map's own-
+    # ship marker silently used stale real-world coordinates.
+    window = MainWindow()
+
+    window.own_position = {"lat": 50.0, "lon": -2.5, "fix": True}
+
+    window.clear_clicked()
+
+    assert window.own_position == {"lat": None, "lon": None, "fix": False}

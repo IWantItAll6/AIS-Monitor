@@ -59,7 +59,12 @@ class ReplayService:
 
             peek_ts = self.extract_timestamp(self.lines[self.index].rstrip())
 
-            if peek_ts != first_ts:
+            # `peek_ts != first_ts` alone is true even when both are None
+            # (an unparseable/missing timestamp) — that let every consecutive
+            # line with a bad timestamp merge into one unbounded batch,
+            # instead of only genuinely-simultaneous, successfully-parsed
+            # lines merging.
+            if first_ts is None or peek_ts != first_ts:
                 break
 
             batch.append(self.next_line())

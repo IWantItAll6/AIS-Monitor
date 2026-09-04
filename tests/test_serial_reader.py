@@ -76,6 +76,48 @@ def test_reader_thread_emits_received_lines(qapp):
     assert received == ["$GPRMC,test*00"]
 
 
+class SlowFakeSerial:
+    """A port whose readline() blocks for a while before returning idle —
+    long enough that request_stop()/stop() timing is actually observable,
+    unlike FakeSerial's near-instant reads."""
+
+    READLINE_DELAY = 0.3
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def readline(self):
+
+        time.sleep(self.READLINE_DELAY)
+
+        return b""
+
+    def close(self):
+        pass
+
+
+def test_request_stop_does_not_block_the_caller(qapp):
+
+    # Found in review: stop() both signals the run loop to exit AND blocks
+    # the caller for up to 2s waiting for it — request_stop() splits out
+    # just the signal, so a caller stopping several readers (see
+    # MainWindow.stop_live_serial) can request all of them stop before
+    # waiting on any, rather than paying each reader's shutdown latency
+    # one after another.
+    thread = SerialReaderThread("COM_FAKE", 9600, "8N1", serial_factory=SlowFakeSerial)
+    thread.start()
+
+    assert pump_until(qapp, lambda: thread.isRunning())
+
+    start = time.monotonic()
+    thread.request_stop()
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.1
+
+    thread.wait(2000)
+
+
 def test_reader_thread_reports_connection_failure(qapp):
 
     def failing_factory(*args, **kwargs):

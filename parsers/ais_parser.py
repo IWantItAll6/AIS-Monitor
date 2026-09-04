@@ -86,12 +86,27 @@ class AISParser:
 
         key = (channel, seq_id)
 
-        entry = self.pending_fragments.setdefault(key, {"parts": {}, "first_seen": now})
+        entry = self.pending_fragments.get(key)
+
+        # Fragment 1 unambiguously starts a fresh message for this
+        # (channel, seq_id) slot (ITU-R M.1371 fragments are always sent in
+        # order) — so whatever was pending there before is either an
+        # abandoned/dropped message or seq_id reuse by an unrelated one,
+        # not a continuation of it. `total` is pinned from this fragment
+        # and reused for the rest of the message, rather than re-read from
+        # each later fragment's own field — a later fragment's total
+        # disagreeing with the first (e.g. a corrupted digit) must not
+        # change how many fragments this message is waited for.
+        if entry is None or frag_num == 1:
+            entry = {"parts": {}, "first_seen": now, "total": total}
+            self.pending_fragments[key] = entry
+
         entry["parts"][frag_num] = sentence
 
         parts = entry["parts"]
+        expected_total = entry["total"]
 
-        if len(parts) < total:
+        if len(parts) < expected_total:
             return None
 
         # seq_id only ever ranges 0-9 (ITU-R M.1371), so it's expected to
@@ -103,11 +118,11 @@ class AISParser:
         # from two different vessels) into one decode() call. Discarding
         # and starting clean is safer than guessing which fragments belong
         # together.
-        if set(parts.keys()) != set(range(1, total + 1)):
+        if set(parts.keys()) != set(range(1, expected_total + 1)):
             del self.pending_fragments[key]
             return None
 
-        ordered = [parts[i] for i in range(1, total + 1)]
+        ordered = [parts[i] for i in range(1, expected_total + 1)]
 
         del self.pending_fragments[key]
 
@@ -166,7 +181,11 @@ class AISParser:
             elif vessel.station_type in STATION_TYPE_LABELS:
                 vessel.type = STATION_TYPE_LABELS[vessel.station_type]
 
-            if hasattr(msg, "lat") and hasattr(msg, "lon"):
+            # 91 / 181 is AIS's reserved "position not available" sentinel —
+            # same idea as the sog/cog/heading sentinels filtered below, but
+            # position had no such check, so an unavailable fix got stored
+            # and plotted/tracked as if it were real.
+            if hasattr(msg, "lat") and hasattr(msg, "lon") and msg.lat != 91 and msg.lon != 181:
                 vessel.lat = msg.lat
                 vessel.lon = msg.lon
                 vessel.track.append((current_time, msg.lat, msg.lon))
@@ -199,8 +218,11 @@ class AISParser:
                 vessel.nav_status = enum_label(msg.status)
 
             if hasattr(msg, "turn"):
-                # -128 (TurnRate.NO_TI_DEFAULT) means no turn info available.
-                vessel.rot = None if msg.turn == -128 else float(msg.turn)
+                # -128 (TurnRate.NO_TI_DEFAULT) means no turn info available;
+                # +-127 means "turning right/left at more than 5deg/30s,
+                # exact rate not available" — a direction-only indicator,
+                # not a literal measured rate, same idea as -128.
+                vessel.rot = None if msg.turn in (-128, 127, -127) else float(msg.turn)
 
             if hasattr(msg, "destination") and msg.destination:
                 vessel.destination = msg.destination

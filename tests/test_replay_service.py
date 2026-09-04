@@ -58,6 +58,25 @@ def test_next_batch_groups_lines_sharing_a_timestamp():
     assert service.next_batch() == []
 
 
+def test_next_batch_does_not_merge_lines_with_unparseable_timestamps():
+
+    # Found in review: `peek_ts != first_ts` is True even when both sides
+    # are None (an unparseable/missing timestamp), so every consecutive line
+    # with a bad timestamp got folded into one unbounded, unpaced batch
+    # instead of being played back one at a time like the rest of the log.
+    service = ReplayService()
+
+    service.lines = [
+        "NO TIMESTAMP HERE — LINE_A\n",
+        "NO TIMESTAMP HERE — LINE_B\n",
+        "[2026-01-01 08:00:00.000] LINE_C\n",
+    ]
+
+    assert service.next_batch() == ["NO TIMESTAMP HERE — LINE_A"]
+    assert service.next_batch() == ["NO TIMESTAMP HERE — LINE_B"]
+    assert service.next_batch() == ["[2026-01-01 08:00:00.000] LINE_C"]
+
+
 def test_time_until_next_ms_reflects_real_elapsed_gap():
 
     service = ReplayService()

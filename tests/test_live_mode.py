@@ -67,6 +67,60 @@ def test_live_mode_processes_and_records_incoming_lines(qapp, tmp_path, monkeypa
     assert "!AIVDM" in recorded_files[0].read_text(encoding="utf-8")
 
 
+class SlowFakeSerial:
+    """A port whose readline() blocks for a while before returning idle —
+    long enough for stop_live_serial()'s overlap-vs-serialize timing to be
+    observable."""
+
+    READLINE_DELAY = 0.3
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def readline(self):
+
+        time.sleep(self.READLINE_DELAY)
+
+        return b""
+
+    def close(self):
+        pass
+
+
+def test_stop_live_serial_overlaps_reader_shutdowns_instead_of_serializing(qapp, tmp_path, monkeypatch):
+
+    # Found in review: SerialReaderThread.stop() blocks its caller (the GUI
+    # thread) for up to its shutdown latency, and stop_live_serial() called
+    # it in a loop — with separate GNSS enabled (2 readers), a manual Stop
+    # paid that latency twice over instead of once, freezing the UI longer
+    # than necessary.
+    monkeypatch.setattr(serial_reader_module.serial, "Serial", SlowFakeSerial)
+
+    window = MainWindow()
+
+    window.recorder.directory = tmp_path / "recordings"
+    window.settings["ais_port"] = "COM_FAKE_AIS"
+    window.settings["ais_baud"] = "38400"
+    window.settings["ais_serial_format"] = "8N1"
+    window.settings["use_separate_gnss"] = True
+    window.settings["gnss_port"] = "COM_FAKE_GNSS"
+    window.settings["gnss_baud"] = "115200"
+    window.settings["gnss_serial_format"] = "8N1"
+
+    window.start_clicked()
+
+    assert len(window.serial_readers) == 2
+    assert pump_until(qapp, lambda: all(r.isRunning() for r in window.serial_readers))
+
+    start = time.monotonic()
+    window.stop_live_serial()
+    elapsed = time.monotonic() - start
+
+    # Serializing two readers' shutdowns would take roughly 2x
+    # SlowFakeSerial.READLINE_DELAY; overlapping them keeps it near 1x.
+    assert elapsed < SlowFakeSerial.READLINE_DELAY * 1.5
+
+
 def test_serial_connection_failure_reverts_to_stopped(qapp, tmp_path, monkeypatch):
 
     def failing_factory(*args, **kwargs):

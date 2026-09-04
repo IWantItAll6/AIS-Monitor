@@ -93,28 +93,48 @@ def test_stale_fragment_buffer_is_pruned_not_kept_forever():
     assert parser.assemble(frag2, later_time) == [frag1, frag2]
 
 
-def test_reused_seq_id_with_mismatched_fragments_is_discarded_not_spliced():
+def test_incomplete_message_with_corrupted_fragment_number_is_discarded_not_spliced():
 
-    # Found in review: without checking that the assembled fragment
-    # numbers are actually 1..total (not just that there are `total` of
-    # them), a dropped fragment plus seq_id reuse could silently splice
-    # together fragments from two unrelated messages into one decode()
-    # call.
+    # The completeness check (fragments 1..N all actually present, not just
+    # that `total` fragments were received) has to catch a fragment set
+    # that adds up to the right *count* by coincidence but isn't the right
+    # *fragment numbers* — e.g. a corrupted frag_num digit on one sentence.
     parser = make_parser()
 
     t = datetime(2026, 1, 1, 12, 0, 0)
 
-    # Old 3-part message: fragment 2 never arrives (dropped).
-    assert parser.assemble("!AIVDM,3,1,5,A,OLD1,0*00", t) is None
-    assert parser.assemble("!AIVDM,3,3,5,A,OLD3,0*00", t) is None
+    assert parser.assemble("!AIVDM,3,1,5,A,AAA,0*00", t) is None
+    assert parser.assemble("!AIVDM,3,3,5,A,CCC,0*00", t) is None
 
-    # New, unrelated 2-part message reuses the same (channel, seq_id) —
-    # its fragment 1 overwrites the old slot's fragment 1, coincidentally
-    # making len(parts) == 2 == the new message's total.
-    result = parser.assemble("!AIVDM,2,1,5,A,NEW1,0*00", t)
+    # A corrupted frag_num digit (4 instead of 2) brings the fragment
+    # count up to `total`, but fragment 2 was never actually received.
+    result = parser.assemble("!AIVDM,3,4,5,A,DDD,0*00", t)
 
     assert result is None
     assert ("A", "5") not in parser.pending_fragments
+
+
+def test_seq_id_reused_by_a_new_message_discards_the_abandoned_one():
+
+    # Fragment 1 unambiguously starts a fresh message for a (channel,
+    # seq_id) slot (seq_id only ranges 0-9, so reuse by an unrelated
+    # message is expected) — an old, never-completed message left in that
+    # slot must be discarded rather than merged into when that happens,
+    # not kept around waiting for fragments that will never arrive.
+    parser = make_parser()
+
+    t = datetime(2026, 1, 1, 12, 0, 0)
+
+    # Old 3-part message: fragment 2 never arrives (dropped/abandoned).
+    assert parser.assemble("!AIVDM,3,1,5,A,OLD1,0*00", t) is None
+    assert parser.assemble("!AIVDM,3,3,5,A,OLD3,0*00", t) is None
+
+    # New, unrelated 2-part message reuses the same (channel, seq_id).
+    assert parser.assemble("!AIVDM,2,1,5,A,NEW1,0*00", t) is None
+
+    result = parser.assemble("!AIVDM,2,2,5,A,NEW2,0*00", t)
+
+    assert result == ["!AIVDM,2,1,5,A,NEW1,0*00", "!AIVDM,2,2,5,A,NEW2,0*00"]
 
 
 def test_ship_type_falls_back_to_raw_code_when_not_an_enum_member(monkeypatch):
@@ -178,6 +198,67 @@ def test_sart_mob_epirb_classified_by_mmsi_prefix(monkeypatch):
 
         assert vessel.station_type == expected_type
         assert vessel.type == expected_label
+
+
+def test_position_not_available_sentinel_is_not_stored(monkeypatch):
+
+    # Found in review: sog/cog/heading each have an explicit "not available"
+    # sentinel check, but lat/lon (91.0/181.0) didn't — an unavailable fix
+    # got stored and plotted/tracked as if it were real.
+    parser = make_parser()
+
+    fake_msg = SimpleNamespace(mmsi=111222333, lat=91.0, lon=181.0)
+    monkeypatch.setattr(ais_parser_module, "decode", lambda *a: fake_msg)
+
+    vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
+
+    assert vessel.lat is None
+    assert vessel.lon is None
+    assert len(vessel.track) == 0
+
+
+def test_turn_rate_direction_only_sentinels_filtered_to_none(monkeypatch):
+
+    # Found in review: only -128 (NO_TI_DEFAULT) was filtered; +-127
+    # ("turning fast, exact rate unknown") passed through as if it were a
+    # literal measured turn rate.
+    parser = make_parser()
+
+    for turn_value in (-128, 127, -127):
+
+        fake_msg = SimpleNamespace(mmsi=111222333, turn=turn_value)
+        monkeypatch.setattr(ais_parser_module, "decode", lambda *a: fake_msg)
+
+        vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
+
+        assert vessel.rot is None
+
+    fake_msg = SimpleNamespace(mmsi=111222333, turn=30)
+    monkeypatch.setattr(ais_parser_module, "decode", lambda *a: fake_msg)
+
+    vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
+
+    assert vessel.rot == 30.0
+
+
+def test_multipart_total_is_pinned_from_first_fragment():
+
+    # Found in review: `total` was re-read from whichever fragment arrived
+    # most recently rather than pinned from the first — a corrupted later
+    # fragment reporting a smaller total could make an incomplete message
+    # look complete and get spliced together prematurely.
+    parser = make_parser()
+
+    t = datetime(2026, 1, 1, 12, 0, 0)
+
+    assert parser.assemble("!AIVDM,3,1,9,A,AAA,0*00", t) is None
+
+    # Second fragment's own total field is corrupted to 2 instead of 3.
+    assert parser.assemble("!AIVDM,2,2,9,A,BBB,0*00", t) is None
+
+    assert parser.assemble("!AIVDM,3,3,9,A,CCC,0*00", t) == [
+        "!AIVDM,3,1,9,A,AAA,0*00", "!AIVDM,2,2,9,A,BBB,0*00", "!AIVDM,3,3,9,A,CCC,0*00",
+    ]
 
 
 def test_ordinary_vessel_mmsi_not_misclassified(monkeypatch):

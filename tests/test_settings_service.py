@@ -1,3 +1,5 @@
+import json
+
 from services.settings_service import SettingsService
 
 
@@ -50,3 +52,33 @@ def test_load_still_applies_top_level_overrides(tmp_path, monkeypatch):
     assert settings["theme"] == "Light"
     assert settings["vessel_timeout"] == "30"
     assert settings["distance_unit"] == SettingsService.DEFAULTS["distance_unit"]
+
+
+def test_load_falls_back_to_defaults_on_a_corrupted_settings_file(tmp_path, monkeypatch):
+
+    # Found in review: a settings.json truncated by a crash mid-write (see
+    # save()) raises JSONDecodeError, which load() didn't catch — crashing
+    # startup entirely instead of falling back to defaults the same as a
+    # missing file.
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text('{"theme": "Light", "vessel_time')  # truncated mid-write
+    monkeypatch.setattr(SettingsService, "SETTINGS_FILE", settings_file)
+
+    settings = SettingsService.load()
+
+    assert settings["theme"] == SettingsService.DEFAULTS["theme"]
+
+
+def test_save_does_not_leave_a_corrupted_file_if_interrupted(tmp_path, monkeypatch):
+
+    # save() must write-then-rename rather than writing settings.json
+    # directly, so a crash mid-write can never leave a truncated file
+    # behind for the next load() to trip over.
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(SettingsService, "SETTINGS_FILE", settings_file)
+
+    SettingsService.save({"theme": "Light"})
+
+    assert settings_file.exists()
+    assert not settings_file.with_suffix(".json.tmp").exists()
+    assert json.loads(settings_file.read_text())["theme"] == "Light"

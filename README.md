@@ -6,7 +6,7 @@ A desktop AIS and GNSS monitoring tool for tracking vessels from a live serial r
 
 ## Status
 
-Actively developed, pre-v1. Replay mode, mapping, and the target list are solid and covered by an automated test suite. Live serial mode has been validated against real AIS/GNSS receiver hardware, with no issues seen during testing.
+Replay mode, mapping, and the target list are solid and covered by an automated test suite. Live serial mode has been validated against real AIS/GNSS receiver hardware, with no issues seen during testing.
 
 ## Features
 

@@ -368,7 +368,11 @@ class MapPanel(QWidget):
         scale_lat = self.height() / y_span
         scale_lon = self.width() / x_span
 
-        self.scale = min(scale_lat, scale_lon, self.MAX_SCALE)
+        # MIN_SCALE floor, not just MAX_SCALE: a collapsed-to-zero-width map
+        # panel (e.g. the splitter dragged shut) makes width()/x_span come
+        # out as 0.0, and everything downstream that divides by self.scale
+        # (visible_bounds(), the scale bar) would crash the next paint.
+        self.scale = max(min(scale_lat, scale_lon, self.MAX_SCALE), self.MIN_SCALE)
 
         self.update()
 
@@ -880,6 +884,14 @@ class MapPanel(QWidget):
         # relative to the cursor) — so panning is just a linear delta in
         # projected space, then converted back to lat/lon.
         self.center_lon -= delta.x() / (60 * self.scale)
+
+        # Wrap back into [-180, 180) — unlike center_lat (clamped just
+        # below), longitude has no natural edge to clamp against, so at low
+        # scale (few pixels per degree) a single drag can walk it far past
+        # +-180. Every bounds check elsewhere (coastline/place lookups,
+        # visible_bounds()) assumes that range, and stops matching anything
+        # once center_lon drifts outside it.
+        self.center_lon = ((self.center_lon + 180) % 360) - 180
 
         new_merc_y = mercator_y(self.center_lat) + delta.y() / self.scale
         new_lat = inverse_mercator_y(new_merc_y)

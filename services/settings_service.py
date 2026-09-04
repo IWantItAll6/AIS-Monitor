@@ -105,6 +105,12 @@ class SettingsService:
         except FileNotFoundError:
             return settings
 
+        # A settings.json truncated/corrupted by a crash mid-write (see
+        # save()) must not crash startup — fall back to defaults the same
+        # as a missing file, rather than propagating JSONDecodeError.
+        except json.JSONDecodeError:
+            return settings
+
         for key, value in data.items():
 
             # Merge nested dicts key-by-key rather than replacing them
@@ -127,5 +133,15 @@ class SettingsService:
 
         cls.SETTINGS_FILE.parent.mkdir(exist_ok=True)
 
-        with open(cls.SETTINGS_FILE, "w") as f:
+        # Write-then-rename rather than writing SETTINGS_FILE directly: a
+        # crash/power-loss mid-write to the real file leaves it truncated,
+        # and json.load() on a truncated file raises JSONDecodeError on the
+        # next launch. os.replace() is atomic, so the real file is always
+        # either the old complete version or the new complete version, never
+        # a partial write.
+        tmp_path = cls.SETTINGS_FILE.with_suffix(".json.tmp")
+
+        with open(tmp_path, "w") as f:
             json.dump(settings, f, indent=4)
+
+        tmp_path.replace(cls.SETTINGS_FILE)
