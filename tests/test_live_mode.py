@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 import services.serial_reader as serial_reader_module
 from ui.main_window import MainWindow
 
@@ -36,6 +38,7 @@ def pump_until(qapp, condition, timeout=3.0):
     return condition()
 
 
+@pytest.mark.serial
 def test_live_mode_processes_and_records_incoming_lines(qapp, tmp_path, monkeypatch):
 
     monkeypatch.setattr(serial_reader_module.serial, "Serial", FakeAisSerial)

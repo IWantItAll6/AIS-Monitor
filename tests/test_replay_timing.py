@@ -1,5 +1,6 @@
 import time
 
+import pytest
 from PySide6.QtCore import QEventLoop, QTimer
 
 from ui.main_window import MainWindow
@@ -60,6 +61,7 @@ def test_replay_paces_by_real_elapsed_time_between_batches(qapp, tmp_path, monke
     window.stop_clicked()
 
 
+@pytest.mark.serial
 def test_replay_speed_multiplier_scales_real_wait(qapp, tmp_path, monkeypatch):
 
     monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.information", lambda *a, **k: None)
@@ -99,6 +101,7 @@ def test_replay_speed_multiplier_scales_real_wait(qapp, tmp_path, monkeypatch):
     window.stop_clicked()
 
 
+@pytest.mark.serial
 def test_pause_then_resume_preserves_remaining_wait_instead_of_playing_instantly(qapp, tmp_path, monkeypatch):
 
     # Found in review: resuming from Pause always called replay_next_line()

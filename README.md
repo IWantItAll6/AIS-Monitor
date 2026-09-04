@@ -64,6 +64,14 @@ pytest
 
 Some tests are skipped automatically if you don't have private field-test logs in `resources/` (see `resources/README.md`) — that's expected on a fresh clone.
 
+A handful of timing-sensitive tests are known to be flaky when the full suite runs back-to-back (they pass reliably on their own). For a fully reliable run — e.g. before a release — use:
+
+```bash
+python scripts/run_tests.py
+```
+
+This runs the main suite, then re-runs each `@pytest.mark.serial` test in its own fresh process afterward.
+
 ## Data sources
 
 - Coastline, land, and populated-places data: [Natural Earth](https://www.naturalearthdata.com/) (public domain).
