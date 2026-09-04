@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QDialog
 from PySide6.QtGui import QPixmap, QIcon
 from PySide6.QtCore import Qt
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "1.0.0"
 APP_AUTHOR = "Iwan Croose"
 
 
