@@ -7,6 +7,10 @@
 # this sentence exists purely for interoperability with that hardware.
 class PSMTParser:
 
+    def __init__(self, error_log=None):
+
+        self.error_log = error_log
+
     def process(self, sentence):
 
         try:
@@ -23,6 +27,7 @@ class PSMTParser:
 
         except Exception as e:
 
-            print(f"PSMT ERROR: {e}")
+            if self.error_log:
+                self.error_log.add("PSMT", str(e), sentence)
 
             return None

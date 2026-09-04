@@ -53,9 +53,10 @@ FRAGMENT_TIMEOUT_SECONDS = 10
 
 class AISParser:
 
-    def __init__(self, registry):
+    def __init__(self, registry, error_log=None):
 
         self.registry = registry
+        self.error_log = error_log
 
         # Multi-part messages (Type 5 static/voyage data — callsign, ship
         # type, destination — is almost always 2 fragments) need every
@@ -246,6 +247,6 @@ class AISParser:
 
         except Exception as e:
 
-            if "Missing fragment numbers" not in str(e):
-                print(f"AIS ERROR: {e}")
+            if "Missing fragment numbers" not in str(e) and self.error_log:
+                self.error_log.add("AIS", str(e), sentence)
             return None

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import parsers.ais_parser as ais_parser_module
 from parsers.ais_parser import AISParser, FRAGMENT_TIMEOUT_SECONDS
+from services.error_log import ErrorLog
 from services.vessel_registry import VesselRegistry
 
 
@@ -271,3 +272,33 @@ def test_ordinary_vessel_mmsi_not_misclassified(monkeypatch):
     vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
 
     assert vessel.station_type == "vessel"
+
+
+def test_decode_failure_is_reported_to_error_log(tmp_path, monkeypatch):
+
+    def raise_decode_error(*a):
+        raise ValueError("not a valid AIS payload")
+
+    monkeypatch.setattr(ais_parser_module, "decode", raise_decode_error)
+
+    error_log = ErrorLog(path=tmp_path / "errors.log")
+    parser = AISParser(VesselRegistry(), error_log)
+
+    vessel = parser.process("!AIVDM,1,1,,,garbage,0*00", None)
+
+    assert vessel is None
+    assert len(error_log.entries) == 1
+    assert error_log.entries[0]["source"] == "AIS"
+    assert "not a valid AIS payload" in error_log.entries[0]["message"]
+
+
+def test_decode_failure_without_error_log_does_not_raise(monkeypatch):
+
+    def raise_decode_error(*a):
+        raise ValueError("not a valid AIS payload")
+
+    monkeypatch.setattr(ais_parser_module, "decode", raise_decode_error)
+
+    parser = make_parser()
+
+    assert parser.process("!AIVDM,1,1,,,garbage,0*00", None) is None

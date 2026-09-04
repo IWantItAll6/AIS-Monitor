@@ -35,6 +35,8 @@ from ui.communications_dialog import CommunicationsDialog
 from ui.preferences_dialog import PreferencesDialog
 from ui.help_dialog import HelpDialog
 from ui.about_dialog import AboutDialog
+from ui.error_log_dialog import ErrorLogDialog
+from services.error_log import ErrorLog
 from services.settings_service import SettingsService
 from services.vessel_registry import VesselRegistry
 from parsers.ais_parser import AISParser
@@ -94,9 +96,11 @@ class MainWindow(QMainWindow):
 
         self.own_track = deque()
 
-        self.ais_parser = AISParser(self.registry)
+        self.error_log = ErrorLog()
+
+        self.ais_parser = AISParser(self.registry, self.error_log)
         self.gnss_parser = GNSSParser()
-        self.psmt_parser = PSMTParser()
+        self.psmt_parser = PSMTParser(self.error_log)
 
         self.setup_ui()
 
@@ -1004,6 +1008,14 @@ class MainWindow(QMainWindow):
         if self.status_warning:
             message += f" | {self.status_warning}"
 
+        # Persistent (not auto-clearing like status_warning) since it
+        # reflects an actual running count for the session, not a one-off
+        # notice — stays visible until the user clears it from the Session
+        # Error Log dialog (Help menu).
+        if self.error_log.entries:
+            count = len(self.error_log.entries)
+            message += f" | ⚠ {count} parse error{'s' if count != 1 else ''}"
+
         self.status_bar.showMessage(message)
 
         self.map_view.set_empty_hint(
@@ -1202,9 +1214,11 @@ class MainWindow(QMainWindow):
         help_menu = menu.addMenu("Help")
 
         self.help_action = help_menu.addAction("Help")
+        self.error_log_action = help_menu.addAction("Session Error Log")
         self.about_action = help_menu.addAction("About")
 
         self.help_action.triggered.connect(self.show_help)
+        self.error_log_action.triggered.connect(self.show_error_log)
         self.about_action.triggered.connect(self.show_about)
 
     def show_help(self):
@@ -1212,6 +1226,16 @@ class MainWindow(QMainWindow):
         dialog = HelpDialog()
         apply_title_bar_theme(dialog, self.settings["theme"])
         dialog.exec()
+
+    def show_error_log(self):
+
+        dialog = ErrorLogDialog(self.error_log)
+        apply_title_bar_theme(dialog, self.settings["theme"])
+        dialog.exec()
+
+        # Clearing may have happened inside the dialog — reflect it in the
+        # status bar immediately rather than waiting for the next tick.
+        self.update_status()
 
     def show_about(self):
 

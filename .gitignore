@@ -34,6 +34,10 @@ data/recordings/
 # at the moment it crashed.
 data/crash.log
 
+# Recoverable parse-error log — see services/error_log.py. Runtime output,
+# not source; can contain raw sentences from whatever feed was connected.
+data/errors.log
+
 # PyInstaller build output (see AISMonitor.spec) — build it, don't commit it.
 build/
 dist/

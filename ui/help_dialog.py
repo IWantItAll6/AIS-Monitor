@@ -245,6 +245,15 @@ GNSS, RSSI, or anything else) — this only affects what's shown, not what's
 processed.
 </p>
 
+<h3>Session Error Log</h3>
+<p>
+A sentence that can't be decoded is skipped rather than crashing the app,
+and noted in <b>Help &gt; Session Error Log</b>. A running count appears in
+the status bar (e.g. "⚠ 2 parse errors") whenever this session has any —
+open the log to see what was skipped and why, or clear it. The full history
+is also written to <b>data/errors.log</b> for reporting a bug.
+</p>
+
 <h3>Recording</h3>
 <p>
 Live sessions are recorded automatically to the <b>Recordings Folder</b>
