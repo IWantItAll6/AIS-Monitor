@@ -15,8 +15,9 @@ def test_empty_course_field_does_not_crash_and_leaves_cog_none():
 
     parser = GNSSParser()
 
-    # Real sentence from the private field-test log — a stationary receiver, so
-    # the course field is empty.
+    # Shaped after a real sentence from a private field-test log (a
+    # stationary receiver, so the course field is empty) — coordinates
+    # replaced with synthetic values, checksum recomputed to match.
     result = parser.process("$GNRMC,115532.00,A,5007.40400,N,00534.06800,W,0.019,,180626,,,A,V*0A")
 
     assert result is not None

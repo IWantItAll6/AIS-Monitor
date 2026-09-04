@@ -55,7 +55,7 @@ def test_live_mode_gets_a_real_timestamp_when_none_supplied(monkeypatch):
 
 def test_multipart_message_assembled_across_calls_real_sentences():
 
-    # Real fragment pair pulled from the private field-test log — a Type 5
+    # Real fragment pair pulled from a private field-test log — a Type 5
     # static/voyage message, which is exactly the message type that carries
     # callsign/ship type and is (almost) always split across 2 fragments.
     parser = make_parser()

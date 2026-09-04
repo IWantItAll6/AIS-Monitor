@@ -35,9 +35,9 @@ def replay_all(window, replay_file):
 @pytest.fixture(scope="module")
 def field_log_1_result(qapp):
 
-    # Real field-test logs aren't committed to the repo (they bake in a
-    # real receiver's test location) — skip gracefully rather than error
-    # for anyone running the suite without their own copy.
+    # Real field-test logs aren't committed to the repo (they're private,
+    # not for public sharing) — skip gracefully rather than error for
+    # anyone running the suite without their own copy.
     if not os.path.exists(FIELD_LOG_1):
         pytest.skip(f"{FIELD_LOG_1} not present — real field logs aren't in the repo")
 
