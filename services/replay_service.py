@@ -1,6 +1,22 @@
 import re
 from datetime import datetime
 
+
+def extract_sentence(line):
+    """Strips the "[YYYY-MM-DD HH:MM:SS.ffffff] " prefix every recorded or
+    replay-file line carries (see MainWindow.on_live_line_received) — a
+    module-level function (not a ReplayService method) so both live/replay
+    processing and the standalone file-analysis pass (which doesn't use a
+    ReplayService instance at all) can parse this format identically."""
+
+    match = re.match(r"^\[\d{4}-\d{2}-\d{2} .*?\]\s*(.*)$", line)
+
+    if match:
+        return match.group(1)
+
+    return line
+
+
 class ReplayService:
 
     def __init__(self):

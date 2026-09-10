@@ -21,12 +21,12 @@ from PySide6.QtWidgets import (
     QWidgetAction,
     QSlider,
     QToolTip,
-    QLineEdit
+    QLineEdit,
+    QProgressDialog
 )
 
 from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QIcon, QCursor, QAction, QKeySequence
-import re
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -36,6 +36,8 @@ from ui.preferences_dialog import PreferencesDialog
 from ui.help_dialog import HelpDialog
 from ui.about_dialog import AboutDialog
 from ui.error_log_dialog import ErrorLogDialog
+from ui.file_analysis_dialog import FileAnalysisDialog
+from services.file_analysis_service import FileAnalysisThread
 from services.error_log import ErrorLog
 from services.settings_service import SettingsService
 from services.vessel_registry import VesselRegistry
@@ -44,7 +46,7 @@ from parsers.gnss_parser import GNSSParser
 from parsers.psmt_parser import PSMTParser
 from services.geo import calculate_range_bearing, format_distance, convert_distance
 from ui.vessel_tree_item import VesselTreeItem
-from services.replay_service import ReplayService
+from services.replay_service import ReplayService, extract_sentence
 from ui.map_panel import MapPanel
 from ui.rssi_graph import RssiGraphWidget
 from services.theme_service import apply_theme, apply_title_bar_theme
@@ -764,7 +766,7 @@ class MainWindow(QMainWindow):
 
     def process_sentence(self, line):
 
-        sentence = self.extract_sentence(line)
+        sentence = extract_sentence(line)
 
         # Filtering only affects what's shown here — nothing about what
         # gets processed or (once session recording exists) logged to disk.
@@ -857,15 +859,6 @@ class MainWindow(QMainWindow):
             current_time = self.replay.current_time or datetime.now()
 
             self.own_track.append((current_time, position["lat"], position["lon"]))
-
-    def extract_sentence(self, line):
-
-        match = re.match(r"^\[\d{4}-\d{2}-\d{2} .*?\]\s*(.*)$", line)
-
-        if match:
-            return match.group(1)
-
-        return line
 
     def format_seen(self, vessel):
 
@@ -1237,6 +1230,12 @@ class MainWindow(QMainWindow):
 
         self.load_sample_action.triggered.connect(self.load_sample_data)
 
+        file_menu.addSeparator()
+
+        self.analyze_file_action = file_menu.addAction("Analyze File...")
+
+        self.analyze_file_action.triggered.connect(self.run_file_analysis)
+
         export_menu = file_menu.addMenu("Export")
 
         self.export_screenshot_action = export_menu.addAction("Screenshot...")
@@ -1427,6 +1426,83 @@ class MainWindow(QMainWindow):
             return
 
         self.load_replay_file(str(sample_path))
+
+    def run_file_analysis(self):
+
+        start_dir = self.settings.get("last_replay_folder", "")
+
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Analyze File", start_dir, "Log Files (*.txt *.log);;All Files (*)"
+        )
+
+        if not filename:
+            return
+
+        self.settings["last_replay_folder"] = str(Path(filename).parent)
+
+        SettingsService.save(self.settings)
+
+        # A completely separate, untrimmed pass over the file — deliberately
+        # NOT reading self.registry/self.replay, which are the live view's
+        # continuously trimmed/timed-out state (see file_analysis_service's
+        # own docstring for why that would silently produce wrong numbers).
+        # Run on a background thread (see FileAnalysisThread) since a large
+        # enough file — a multi-day continuous capture — can take upwards
+        # of 30s, long enough to freeze the UI if run inline here.
+        self.analysis_thread = FileAnalysisThread(filename)
+
+        progress_dialog = QProgressDialog("Analyzing file...", "Cancel", 0, 100, self)
+        progress_dialog.setWindowTitle("File Analysis")
+        apply_title_bar_theme(progress_dialog, self.settings["theme"])
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+        progress_dialog.setValue(0)
+
+        self.analysis_thread.progress.connect(
+            lambda done, total: progress_dialog.setValue(int(done / total * 100) if total else 100)
+        )
+        progress_dialog.canceled.connect(self.analysis_thread.cancel)
+
+        def on_analysis_finished(analyses):
+
+            progress_dialog.close()
+
+            if not analyses:
+                QMessageBox.information(self, "File Analysis", "No AIS targets found in this file.")
+                return
+
+            dialog = FileAnalysisDialog(filename, analyses, self.settings.get("distance_unit", "NM"))
+            apply_title_bar_theme(dialog, self.settings["theme"])
+            dialog.exec()
+
+        def on_analysis_failed(message):
+
+            progress_dialog.close()
+
+            QMessageBox.warning(self, "File Analysis", f"Could not analyze file: {message}")
+
+        self.analysis_thread.finished_analysis.connect(on_analysis_finished)
+        self.analysis_thread.cancelled.connect(progress_dialog.close)
+        self.analysis_thread.failed.connect(on_analysis_failed)
+
+        self.analysis_thread.start()
+
+        # Blocks this method (not the whole app) in a local event loop until
+        # progress_dialog.close() is called above — the analysis itself
+        # keeps running on analysis_thread, which is what keeps the rest of
+        # the app's event loop (and this dialog's own Cancel button)
+        # responsive throughout.
+        progress_dialog.exec()
+
+        # A signal (finished_analysis/cancelled/failed) firing only means
+        # analysis_thread is about to return from run(), not that it has —
+        # confirmed empirically: right after a cancel, isRunning() was still
+        # True here without this wait(). The success path happened to mask
+        # this (opening FileAnalysisDialog gave the thread plenty of time to
+        # actually finish first), but cancel/fail return almost immediately,
+        # risking the same "QThread: Destroyed while thread is still
+        # running" class of bug already hit once in stop_live_serial().
+        self.analysis_thread.wait()
 
     def load_replay_file(self, filename):
 
