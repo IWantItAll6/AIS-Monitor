@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta
 
 import pytest
+from pyais.encode import encode_dict
 
 import services.file_analysis_service as file_analysis_service
 from services.file_analysis_service import analyze_file, format_duration, VesselAnalysis, FileAnalysisThread
@@ -202,6 +203,135 @@ def test_file_analysis_thread_emits_finished_analysis_on_success(qapp, monkeypat
 
     assert pump_until(qapp, lambda: len(results) >= 1)
     assert results[0] == expected
+
+
+def write_log(tmp_path, entries):
+    """entries: [(datetime, sentence), ...] -> a "[timestamp] sentence"
+    file matching this app's replay/recording format, returns its path."""
+
+    path = tmp_path / "synthetic.log"
+
+    lines = [f"[{ts:%Y-%m-%d %H:%M:%S.%f}] {sentence}" for ts, sentence in entries]
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    return str(path)
+
+
+def ais_sentence(msg_type, mmsi, lat, lon, speed, cs=None):
+
+    fields = {"type": msg_type, "mmsi": mmsi, "lat": lat, "lon": lon, "speed": speed}
+
+    if cs is not None:
+        fields["cs"] = cs
+
+    return encode_dict(fields, sentence_type="VDM")[0]
+
+
+def test_estimate_tx_loss_runs_by_default(tmp_path):
+
+    # No estimate_tx_loss flag to opt into anymore — measured to add no
+    # meaningful runtime cost, so it always runs (see analyze_file's
+    # docstring). Zero-vs-one report never produces a comparable gap, so
+    # expected_tx/estimated_tx_loss_percent correctly stay at "no data yet"
+    # even though the calculation ran.
+    start = datetime(2026, 1, 1, 0, 0, 0)
+
+    entries = [
+        (start, ais_sentence(1, 111111111, 50.0, -5.0, 10.0)),
+    ]
+
+    analyses = analyze_file(write_log(tmp_path, entries))
+    vessel = analyses[0]
+
+    assert vessel.position_report_count == 1
+    assert vessel.expected_tx == 0.0
+    assert vessel.estimated_tx_loss_percent is None
+
+
+def test_estimate_tx_loss_class_a(tmp_path):
+
+    # 10kn -> 10s nominal interval (see ais_reporting_intervals). Two
+    # reports 100s apart -> 10 expected, only 2 actually received -> 80%
+    # estimated loss.
+    start = datetime(2026, 1, 1, 0, 0, 0)
+
+    entries = [
+        (start, ais_sentence(1, 111111111, 50.0, -5.0, 10.0)),
+        (start + timedelta(seconds=100), ais_sentence(1, 111111111, 50.0, -5.0, 10.0)),
+    ]
+
+    analyses = analyze_file(write_log(tmp_path, entries))
+    vessel = next(a for a in analyses if a.mmsi == 111111111)
+
+    assert vessel.position_report_count == 2
+    assert vessel.expected_tx == pytest.approx(10.0)
+    assert vessel.estimated_tx_loss_percent == pytest.approx(80.0)
+
+
+def test_estimate_tx_loss_class_b_sotdma(tmp_path):
+
+    # 5kn Class B SOTDMA (cs=False) -> 30s nominal interval. 60s gap -> 2
+    # expected, 2 actual -> 0% loss.
+    start = datetime(2026, 1, 1, 0, 0, 0)
+
+    entries = [
+        (start, ais_sentence(18, 222222222, 50.0, -5.0, 5.0, cs=False)),
+        (start + timedelta(seconds=60), ais_sentence(18, 222222222, 50.0, -5.0, 5.0, cs=False)),
+    ]
+
+    analyses = analyze_file(write_log(tmp_path, entries))
+    vessel = next(a for a in analyses if a.mmsi == 222222222)
+
+    assert vessel.expected_tx == pytest.approx(2.0)
+    assert vessel.position_report_count == 2
+    assert vessel.estimated_tx_loss_percent == pytest.approx(0.0)
+
+
+def test_estimate_tx_loss_class_b_cs_can_go_negative(tmp_path):
+
+    # 5kn Class B CS (cs=True) -> 30s nominal interval, but these two
+    # reports arrive only 15s apart — faster than modeled, so loss is
+    # negative rather than clamped to 0. Deliberate: a negative value is
+    # the approximation's own visible signal (see estimated_tx_loss_percent's
+    # docstring), not something to hide.
+    start = datetime(2026, 1, 1, 0, 0, 0)
+
+    entries = [
+        (start, ais_sentence(18, 333333333, 50.0, -5.0, 5.0, cs=True)),
+        (start + timedelta(seconds=15), ais_sentence(18, 333333333, 50.0, -5.0, 5.0, cs=True)),
+    ]
+
+    analyses = analyze_file(write_log(tmp_path, entries))
+    vessel = next(a for a in analyses if a.mmsi == 333333333)
+
+    assert vessel.expected_tx == pytest.approx(0.5)
+    assert vessel.position_report_count == 2
+    assert vessel.estimated_tx_loss_percent == pytest.approx(-300.0)
+
+
+def test_estimate_tx_loss_ignores_unmodeled_message_types(tmp_path):
+
+    # A base station (type 4) report sitting between two Class A position
+    # reports must not be counted as a comparable report, or distort the
+    # gap either as an endpoint or by inflating position_report_count.
+    start = datetime(2026, 1, 1, 0, 0, 0)
+
+    entries = [
+        (start, ais_sentence(1, 111111111, 50.0, -5.0, 10.0)),
+        (start + timedelta(seconds=50), ais_sentence(4, 444444444, 50.1, -5.1, 0.0)),
+        (start + timedelta(seconds=100), ais_sentence(1, 111111111, 50.0, -5.0, 10.0)),
+    ]
+
+    analyses = analyze_file(write_log(tmp_path, entries))
+
+    vessel = next(a for a in analyses if a.mmsi == 111111111)
+    assert vessel.position_report_count == 2
+    assert vessel.expected_tx == pytest.approx(10.0)
+
+    base_station = next(a for a in analyses if a.mmsi == 444444444)
+    assert base_station.position_report_count == 0
+    assert base_station.estimated_tx_loss_percent is None
 
 
 def test_file_analysis_thread_emits_cancelled_when_analyze_file_returns_none(qapp, monkeypatch):

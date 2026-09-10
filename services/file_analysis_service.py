@@ -10,6 +10,7 @@ from parsers.gnss_parser import GNSSParser
 from services.vessel_registry import VesselRegistry
 from services.replay_service import ReplayService, extract_sentence
 from services.geo import calculate_range_bearing
+from services.ais_reporting_intervals import expected_interval_seconds
 
 
 @dataclass
@@ -43,10 +44,26 @@ class VesselAnalysis:
     range_min_nm: float | None = None
     range_max_nm: float | None = None
 
+    # expected_tx is a fractional running sum (each gap between reports
+    # contributes gap_seconds / interval_at_that_time, not a whole number),
+    # rounded only for display. position_report_count is deliberately
+    # separate from tx_count above: tx_count includes every message type
+    # (static data included), but expected_tx only models position-report
+    # cadence, so comparing it against tx_count would be comparing
+    # different things. Measured to add no meaningful runtime cost (all
+    # real-log timing deltas were within measurement noise), so — unlike
+    # the rest of this file's stats, none of which are optional — this
+    # always runs; there's no "skip it to go faster" tradeoff to expose.
+    expected_tx: float = 0.0
+    position_report_count: int = 0
+
     # Not part of the public result shape — just bookkeeping so
-    # distance_traveled_nm can be accumulated incrementally (one running
-    # sum) rather than storing every position and summing at the end.
+    # distance_traveled_nm/expected_tx can be accumulated incrementally (one
+    # running sum) rather than storing every position/report and summing at
+    # the end.
     _last_position: tuple | None = field(default=None, repr=False)
+    _last_report_time: datetime | None = field(default=None, repr=False)
+    _last_report_interval_seconds: float | None = field(default=None, repr=False)
 
     @property
     def duration_seconds(self):
@@ -65,6 +82,22 @@ class VesselAnalysis:
     def avg_speed(self):
 
         return self.speed_sum / self.speed_count if self.speed_count else None
+
+    @property
+    def estimated_tx_loss_percent(self):
+        """None until at least one gap between two comparable reports has
+        been observed (expected_tx starts at 0 and only a real gap grows
+        it) — distinct from a genuine 0% loss. Not clamped at 0: a negative
+        value is possible and meaningful — it means the vessel reported
+        *faster* than the interval implied by its speed at the start of a
+        gap predicted, most often because it sped up or began maneuvering
+        partway through that gap. That's the approximation's own visible
+        error, not a bug to hide."""
+
+        if self.expected_tx <= 0:
+            return None
+
+        return (self.expected_tx - self.position_report_count) / self.expected_tx * 100
 
 
 def format_duration(seconds):
@@ -99,6 +132,7 @@ def analyze_file(filename, cancel_event=None, progress_callback=None, progress_i
     not to throttle, unlike progress_callback(lines_processed, total_lines)
     which fires only every progress_interval lines, since a long file means
     a lot of calls and this is typically a cross-thread Qt signal emit.
+
     Returns a list of VesselAnalysis sorted by MMSI, or None if cancelled.
     """
 
@@ -185,6 +219,29 @@ def analyze_file(filename, cancel_event=None, progress_callback=None, progress_i
                         analysis.range_max_nm = (
                             range_nm if analysis.range_max_nm is None else max(analysis.range_max_nm, range_nm)
                         )
+
+                interval = expected_interval_seconds(ais_parser.last_msg_type, ais_parser.last_cs, vessel.sog)
+
+                # A report type with no modeled reporting-rate rule (static
+                # data, base station, AtoN) can't be compared — skip it
+                # rather than let it silently distort the gap either as the
+                # start or end of a "comparable" span.
+                if interval is not None:
+
+                    if timestamp is not None and analysis._last_report_time is not None:
+
+                        gap_seconds = (timestamp - analysis._last_report_time).total_seconds()
+
+                        # The interval implied by the *earlier* report's
+                        # speed — held constant across the gap, since
+                        # that's all a receive-only stream can know about
+                        # what happened during it. This is the estimate's
+                        # core, stated approximation.
+                        analysis.expected_tx += gap_seconds / analysis._last_report_interval_seconds
+
+                    analysis.position_report_count += 1
+                    analysis._last_report_time = timestamp
+                    analysis._last_report_interval_seconds = interval
 
         elif sentence.startswith("!AIVDO"):
 

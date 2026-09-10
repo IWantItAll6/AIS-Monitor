@@ -65,6 +65,16 @@ class AISParser:
         # "first_seen": datetime}.
         self.pending_fragments = {}
 
+        # The most recently decoded message's type and (msg_type 18 only)
+        # Class B unit flag — exposed alongside the mutated Vessel (rather
+        # than added to models.vessel.Vessel, which only holds current/live
+        # display state) for callers that need more than that, e.g.
+        # file_analysis_service's expected-vs-actual TX estimate, which
+        # needs to know which ITU-R M.1371 reporting-interval table applied
+        # to this specific report.
+        self.last_msg_type = None
+        self.last_cs = None
+
     def assemble(self, sentence, current_time=None):
 
         fields = sentence.split(",")
@@ -153,6 +163,9 @@ class AISParser:
                 return None
 
             msg = decode(*fragments)
+
+            self.last_msg_type = getattr(msg, "msg_type", None)
+            self.last_cs = getattr(msg, "cs", None)
 
             mmsi = getattr(msg, "mmsi", None)
 
