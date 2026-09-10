@@ -46,6 +46,7 @@ from services.geo import calculate_range_bearing, format_distance, convert_dista
 from ui.vessel_tree_item import VesselTreeItem
 from services.replay_service import ReplayService
 from ui.map_panel import MapPanel
+from ui.rssi_graph import RssiGraphWidget
 from services.theme_service import apply_theme, apply_title_bar_theme
 from services.serial_reader import SerialReaderThread
 from services.session_recorder import SessionRecorder
@@ -304,6 +305,27 @@ class MainWindow(QMainWindow):
             self.detail_field_captions[name] = caption_label
 
         target_layout.addWidget(details_widget)
+
+        self.rssi_graph_container = QWidget()
+
+        rssi_graph_layout = QVBoxLayout()
+        rssi_graph_layout.setContentsMargins(0, 0, 0, 0)
+        self.rssi_graph_container.setLayout(rssi_graph_layout)
+
+        rssi_graph_title = QLabel("RSSI History")
+        font = rssi_graph_title.font()
+        font.setBold(True)
+        rssi_graph_title.setFont(font)
+        rssi_graph_layout.addWidget(rssi_graph_title)
+
+        self.rssi_graph = RssiGraphWidget()
+        self.rssi_graph.set_vessel_color(self.settings["vessel_color"])
+        self.rssi_graph.set_pinned_color(self.settings["pinned_color"])
+        rssi_graph_layout.addWidget(self.rssi_graph)
+
+        self.rssi_graph_container.setVisible(self.settings.get("show_rssi_graph", True))
+
+        target_layout.addWidget(self.rssi_graph_container)
 
         self.apply_detail_field_visibility()
 
@@ -802,6 +824,10 @@ class MainWindow(QMainWindow):
 
                 if vessel:
                     vessel.rssi = psmt["rssi"]
+
+                    if self.replay.current_time is not None:
+                        vessel.rssi_history.append((self.replay.current_time, psmt["rssi"]))
+
                     self.update_target_tree()
 
         elif sentence.startswith("$GP"):
@@ -874,6 +900,7 @@ class MainWindow(QMainWindow):
 
         self.check_vessel_timeouts()
         self.trim_vessel_tracks()
+        self.trim_vessel_rssi_history()
         self.trim_own_track()
 
         # Amend existing rows in place rather than clear()+rebuild, so the
@@ -1088,6 +1115,8 @@ class MainWindow(QMainWindow):
             self.map_view.set_distance_unit(self.settings["distance_unit"])
             self.map_view.set_vessel_color(self.settings["vessel_color"])
             self.map_view.set_pinned_color(self.settings["pinned_color"])
+            self.rssi_graph.set_vessel_color(self.settings["vessel_color"])
+            self.rssi_graph.set_pinned_color(self.settings["pinned_color"])
             self.map_view.set_coastal_filter(
                 self.settings["coastal_towns_only"], float(self.settings["coastal_threshold_nm"])
             )
@@ -1140,6 +1169,11 @@ class MainWindow(QMainWindow):
         self.show_place_names_action.setCheckable(True)
         self.show_place_names_action.setChecked(self.settings["show_place_names"])
         self.show_place_names_action.toggled.connect(self.set_show_place_names)
+
+        self.show_rssi_graph_action = view_menu.addAction("Show RSSI Graph")
+        self.show_rssi_graph_action.setCheckable(True)
+        self.show_rssi_graph_action.setChecked(self.settings.get("show_rssi_graph", True))
+        self.show_rssi_graph_action.toggled.connect(self.set_show_rssi_graph)
 
         columns_menu = view_menu.addMenu("Select Columns")
 
@@ -1325,6 +1359,14 @@ class MainWindow(QMainWindow):
         self.map_view.set_show_place_names(show)
 
         self.settings["show_place_names"] = show
+
+        SettingsService.save(self.settings)
+
+    def set_show_rssi_graph(self, show):
+
+        self.rssi_graph_container.setVisible(show)
+
+        self.settings["show_rssi_graph"] = show
 
         SettingsService.save(self.settings)
 
@@ -1711,6 +1753,8 @@ class MainWindow(QMainWindow):
         self.detail_length.setText("-" if vessel.length is None else f"{vessel.length} m")
         self.detail_beam.setText("-" if vessel.beam is None else f"{vessel.beam} m")
 
+        self.rssi_graph.set_history(vessel.rssi_history, self.replay.current_time, vessel.pinned)
+
     def reset_session(self):
 
         # Pinned vessels survive a clear, but with their data wiped back to
@@ -1771,6 +1815,8 @@ class MainWindow(QMainWindow):
         self.detail_rot.setText("-")
         self.detail_length.setText("-")
         self.detail_beam.setText("-")
+
+        self.rssi_graph.clear()
 
     def reset_vessel_data(self, vessel):
 
@@ -1844,6 +1890,21 @@ class MainWindow(QMainWindow):
 
         for vessel in self.registry.vessels.values():
             self.trim_track(vessel.track, track_seconds)
+
+    def trim_vessel_rssi_history(self):
+
+        if self.replay.current_time is None:
+            return
+
+        track_length_setting = self.settings.get("track_length", "10")
+
+        if track_length_setting == "Unlimited":
+            return
+
+        track_seconds = int(track_length_setting) * 60
+
+        for vessel in self.registry.vessels.values():
+            self.trim_track(vessel.rssi_history, track_seconds)
 
     def trim_own_track(self):
 

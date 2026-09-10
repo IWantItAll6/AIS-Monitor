@@ -36,6 +36,7 @@ class SettingsService:
         "track_length": "10",
 
         "show_place_names": True,
+        "show_rssi_graph": True,
         "coastal_towns_only": False,
         "coastal_threshold_nm": "5",
 

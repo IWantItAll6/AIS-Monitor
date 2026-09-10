@@ -27,6 +27,7 @@ class Vessel:
     heading: int | None = None
 
     rssi: int | None = None
+    rssi_history: deque = field(default_factory=deque)
 
     last_seen: datetime = field(default_factory=datetime.now)
     track: deque = field(default_factory=deque)

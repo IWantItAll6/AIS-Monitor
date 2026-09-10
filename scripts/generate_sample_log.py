@@ -307,7 +307,15 @@ def generate():
             }, sentence_type="VDM"):
                 emit(sentence, time)
 
-            emit(psmt("A", -90 - (vessel["mmsi"] % 20)), time)
+            # A slow sine drift per vessel (out of phase with each other via
+            # the mmsi-derived offset) rather than a constant value, so the
+            # RSSI history graph actually has something to show when
+            # replaying this log instead of a flat line.
+            elapsed_since_start = (time - sim_start).total_seconds()
+            phase = (vessel["mmsi"] % 7) * 0.9
+            drift = round(6 * sin(elapsed_since_start / 20 + phase))
+
+            emit(psmt("A", -90 - (vessel["mmsi"] % 20) + drift), time)
 
             interval = class_a_report_interval(vessel["speed"])
             heapq.heappush(heap, (time + timedelta(seconds=interval), next(seq), "vessel_ais", vessel))
