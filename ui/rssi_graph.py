@@ -8,8 +8,29 @@ class RssiGraphWidget(QWidget):
     plain QPainter widget rather than pulling in a charting dependency, to
     match how MapPanel already hand-rolls its own rendering."""
 
-    HEIGHT = 70
+    HEIGHT = 84
     MARGIN = 6
+
+    # Reserved vertical space for the text rows (scale_max/caption at top,
+    # scale_min at bottom) that the line itself must never enter — without
+    # this, the line's plotting range spanned the *entire* widget height,
+    # the same space the text occupies, so a value near the top or bottom
+    # of the scale drew the line directly through/over the text (found on
+    # a real multi-hour log where a vessel's RSSI swung close to the scale
+    # edges — MMSI 970000014, ~11:21). Sized for the 8pt caption font used
+    # below: enough clearance above the top baseline (ascent) and below/
+    # above the bottom baseline for its full glyph height, plus a couple
+    # px of breathing room.
+    TOP_TEXT_PADDING = 13
+    BOTTOM_TEXT_PADDING = 12
+
+    # A dedicated row below the scale_min label for the time-axis labels
+    # (oldest-sample age on the left, "now" on the right) — without this,
+    # which side of the graph is the most recent data is only implicit
+    # (newest on the right, matching a stock-chart/left-to-right-in-time
+    # convention), which isn't obvious at a glance, especially having just
+    # jumped to an arbitrary point in a long replay.
+    TIME_AXIS_PADDING = 14
 
     # A round default scale for the RX analyser's RSSI readings (observed
     # in practice to sit roughly in this dBm range) rather than auto-scaling
@@ -96,6 +117,28 @@ class RssiGraphWidget(QWidget):
 
         return scale_min, scale_max
 
+    @staticmethod
+    def format_age(seconds):
+        """754 -> "12m ago". Deliberately coarser than
+        file_analysis_service.format_duration (which keeps both hours and
+        minutes, or minutes and seconds) — this label only needs to orient
+        the viewer ("that end is a while back"), not give a precise reading,
+        and staying to one unit keeps it short enough to fit the corner."""
+
+        seconds = int(seconds)
+
+        if seconds < 60:
+            return f"{seconds}s ago"
+
+        minutes = seconds // 60
+
+        if minutes < 60:
+            return f"{minutes}m ago"
+
+        hours = minutes // 60
+
+        return f"{hours}h ago"
+
     def draw_graph(self, painter):
 
         values = [rssi for _, rssi in self.history]
@@ -114,12 +157,21 @@ class RssiGraphWidget(QWidget):
         plot_top = self.MARGIN
         plot_bottom = self.height() - self.MARGIN
         plot_width = max(plot_right - plot_left, 1)
-        plot_height = max(plot_bottom - plot_top, 1)
+
+        # The line's own vertical range is inset from plot_top/plot_bottom
+        # by the text padding above — plot_top/plot_bottom themselves stay
+        # the anchors the scale_max/scale_min text is drawn from, unchanged.
+        # TIME_AXIS_PADDING carves out one more row below that, for the
+        # oldest-sample-age/"now" labels drawn at the very end of this
+        # method.
+        line_top = plot_top + self.TOP_TEXT_PADDING
+        line_bottom = plot_bottom - self.BOTTOM_TEXT_PADDING - self.TIME_AXIS_PADDING
+        line_height = max(line_bottom - line_top, 1)
 
         def to_point(time, rssi):
 
             x = plot_left + ((time - start_time).total_seconds() / duration) * plot_width
-            y = plot_bottom - ((rssi - scale_min) / span) * plot_height
+            y = line_bottom - ((rssi - scale_min) / span) * line_height
 
             return QPointF(x, y)
 
@@ -144,9 +196,11 @@ class RssiGraphWidget(QWidget):
 
         # Scale endpoints together on the left (the y-axis) — top =
         # scale_max, bottom = scale_min — so both ends of the axis are read
-        # from the same edge instead of hunting opposite corners.
+        # from the same edge instead of hunting opposite corners. scale_min
+        # sits right under the line's own bottom edge (line_bottom), not
+        # plot_bottom — plot_bottom now anchors the time-axis row below it.
         painter.drawText(plot_left, plot_top + 8, f"{scale_max}")
-        painter.drawText(plot_left, plot_bottom - 2, f"{scale_min}")
+        painter.drawText(plot_left, line_bottom + self.BOTTOM_TEXT_PADDING - 2, f"{scale_min}")
 
         # min/current/max stats on the opposite (right) side.
         metrics = painter.fontMetrics()
@@ -155,3 +209,13 @@ class RssiGraphWidget(QWidget):
         caption = f"min {min_value}  ·  current {current_value}  ·  max {max_value}"
 
         painter.drawText(plot_right - metrics.horizontalAdvance(caption), plot_top + 8, caption)
+
+        # Time axis: which side is "now" isn't otherwise obvious, especially
+        # having just jumped to an arbitrary point in a long replay — newest
+        # data is on the right (to_point() maps start_time to plot_left,
+        # end_time to plot_right), so labeled accordingly here.
+        age_label = self.format_age(duration)
+        now_label = "now"
+
+        painter.drawText(plot_left, plot_bottom - 2, age_label)
+        painter.drawText(plot_right - metrics.horizontalAdvance(now_label), plot_bottom - 2, now_label)
