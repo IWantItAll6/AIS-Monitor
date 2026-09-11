@@ -179,6 +179,56 @@ def test_reader_strips_telnet_negotiation_bytes_from_a_real_stream(qapp):
     server.close()
 
 
+def test_reader_reports_a_clean_remote_disconnect_as_an_error(qapp):
+    """QTcpSocket emits `disconnected`, not `errorOccurred`, for a clean
+    close — e.g. a receiver rebooting or just closing the connection
+    normally. Without handling it explicitly, the app would silently stop
+    receiving AIS data with no indication anything happened at all."""
+
+    server = start_loopback_server()
+
+    reader = NetworkAisReader("127.0.0.1", server.serverPort())
+
+    errors = []
+    reader.error_occurred.connect(errors.append)
+
+    reader.start()
+
+    assert pump_until(qapp, server.hasPendingConnections)
+    connection = server.nextPendingConnection()
+
+    connection.close()  # the remote end hangs up, not us
+
+    assert pump_until(qapp, lambda: len(errors) >= 1)
+
+    server.close()
+
+
+def test_reader_does_not_report_an_error_for_a_disconnect_we_requested(qapp):
+
+    server = start_loopback_server()
+
+    reader = NetworkAisReader("127.0.0.1", server.serverPort())
+
+    errors = []
+    reader.error_occurred.connect(errors.append)
+
+    reader.start()
+
+    assert pump_until(qapp, server.hasPendingConnections)
+
+    reader.stop()
+
+    # Give the disconnect a moment to actually complete and fire signals.
+    for _ in range(20):
+        qapp.processEvents()
+        time.sleep(0.01)
+
+    assert errors == []
+
+    server.close()
+
+
 def test_reader_reports_connection_failure(qapp):
 
     # Bind then immediately release a real port, so connecting to it is

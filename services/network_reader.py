@@ -108,11 +108,17 @@ class NetworkAisReader(QObject):
         self._raw_buffer = b""
         self._buffer = b""
 
+        # Set by request_stop() so _on_disconnected can tell "the user
+        # clicked Stop" apart from "the remote end closed the connection
+        # on us" — only the latter is actually worth surfacing as an error.
+        self._stop_requested = False
+
     def start(self):
 
         self.socket = self._socket_factory()
         self.socket.readyRead.connect(self._on_ready_read)
         self.socket.errorOccurred.connect(self._on_socket_error)
+        self.socket.disconnected.connect(self._on_disconnected)
 
         self.socket.connectToHost(self.host, self.port)
 
@@ -139,7 +145,20 @@ class NetworkAisReader(QObject):
 
         self.error_occurred.emit(self.socket.errorString())
 
+    def _on_disconnected(self):
+        """QTcpSocket emits `disconnected` (not `errorOccurred`) for a
+        clean close initiated by either end — a receiver rebooting or
+        just closing the connection normally wouldn't otherwise be
+        noticed at all, silently leaving the app looking "live" with no
+        more AIS data arriving, indistinguishable from a genuinely quiet
+        channel."""
+
+        if not self._stop_requested:
+            self.error_occurred.emit("Connection closed by remote host")
+
     def request_stop(self):
+
+        self._stop_requested = True
 
         if self.socket is not None:
             self.socket.disconnectFromHost()

@@ -10,7 +10,7 @@ from parsers.gnss_parser import GNSSParser
 from services.vessel_registry import VesselRegistry
 from services.replay_service import ReplayService, extract_sentence
 from services.geo import calculate_range_bearing
-from services.ais_reporting_intervals import expected_interval_seconds
+from services.ais_reporting_intervals import expected_interval_seconds, update_low_speed_streak
 
 
 @dataclass
@@ -64,6 +64,12 @@ class VesselAnalysis:
     _last_position: tuple | None = field(default=None, repr=False)
     _last_report_time: datetime | None = field(default=None, repr=False)
     _last_report_interval_seconds: float | None = field(default=None, repr=False)
+
+    # See services.ais_reporting_intervals.update_low_speed_streak — kept
+    # in sync with the live VesselUptimeTracker's own tracking of the same
+    # thing, so a file-analysis pass over a recorded session estimates the
+    # exact same expected interval live tracking would have for it.
+    _low_speed_since: datetime | None = field(default=None, repr=False)
 
     @property
     def duration_seconds(self):
@@ -220,8 +226,15 @@ def analyze_file(filename, cancel_event=None, progress_callback=None, progress_i
                             range_nm if analysis.range_max_nm is None else max(analysis.range_max_nm, range_nm)
                         )
 
+                if timestamp is not None:
+                    analysis._low_speed_since, sustained_low_speed = update_low_speed_streak(
+                        analysis._low_speed_since, timestamp, vessel.sog
+                    )
+                else:
+                    sustained_low_speed = False
+
                 interval = expected_interval_seconds(
-                    ais_parser.last_msg_type, ais_parser.last_cs, vessel.sog, vessel.nav_status
+                    ais_parser.last_msg_type, ais_parser.last_cs, vessel.sog, vessel.nav_status, sustained_low_speed
                 )
 
                 # A report type with no modeled reporting-rate rule (static

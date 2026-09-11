@@ -5,6 +5,26 @@ import pytest
 import services.serial_reader as serial_reader_module
 from ui.main_window import MainWindow
 
+SAMPLE_LOG = "resources/sample_replay.log"
+
+
+def test_communications_stays_enabled_during_replay(qapp):
+
+    # Communications settings only govern the live serial/network reader,
+    # which Replay never touches, so there's no reason to lock it there.
+    window = MainWindow()
+
+    window.load_replay_file(SAMPLE_LOG)
+    assert window.current_mode == "Replay"
+    assert window.communications_action.isEnabled() is True
+
+    window.start_clicked()
+    assert window.current_mode == "Replay"
+    assert window.communications_action.isEnabled() is True
+
+    window.stop_clicked()
+    assert window.communications_action.isEnabled() is True
+
 
 class FakeAisSerial:
     """Simulates an AIS receiver on a serial port — one real position report
@@ -68,6 +88,42 @@ def test_live_mode_processes_and_records_incoming_lines(qapp, tmp_path, monkeypa
 
     assert len(recorded_files) == 1
     assert "!AIVDM" in recorded_files[0].read_text(encoding="utf-8")
+
+
+def test_communications_disabled_only_while_live_is_actively_running(qapp, tmp_path, monkeypatch):
+    """Communications settings silently had no effect on an already-running
+    reader (see git log) — disabled while actually connected (Live) rather
+    than left clickable but ineffective. Paused/Stopped/Replay are all safe
+    to change it in: Pause fully disconnects the reader (stop_live_serial()),
+    and Start always rebuilds it fresh from current settings either way."""
+
+    monkeypatch.setattr(serial_reader_module.serial, "Serial", FakeAisSerial)
+
+    window = MainWindow()
+
+    window.recorder.directory = tmp_path / "recordings"
+    window.settings["ais_port"] = "COM_FAKE"
+    window.settings["ais_baud"] = "38400"
+    window.settings["ais_serial_format"] = "8N1"
+    window.settings["use_separate_gnss"] = False
+
+    assert window.communications_action.isEnabled() is True
+
+    window.start_clicked()
+    assert window.current_mode == "Live"
+    assert window.communications_action.isEnabled() is False
+
+    window.pause_clicked()
+    assert window.current_mode == "Paused"
+    assert window.communications_action.isEnabled() is True
+
+    window.start_clicked()  # resume
+    assert window.current_mode == "Live"
+    assert window.communications_action.isEnabled() is False
+
+    window.stop_clicked()
+    assert window.current_mode == "Stopped"
+    assert window.communications_action.isEnabled() is True
 
 
 class SlowFakeSerial:

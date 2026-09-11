@@ -34,6 +34,45 @@ CLASS_B_MSG_TYPES = (18, 19)
 
 CLASS_A_ANCHORED_NAV_STATUSES = ("AtAnchor", "Moored")
 
+# How slow, and for how long, before a Class A vessel not explicitly
+# reporting AtAnchor/Moored still gets treated as if it were — real-world
+# nav_status is frequently left at its default ("Undefined") regardless of
+# the vessel's actual state, so requiring it literally misses vessels that
+# are plainly sitting still. Time-based (not "N consecutive reports") since
+# real report spacing is irregular — a count could take an arbitrarily long
+# or short wall-clock time to reach depending on how sparse reception is.
+LOW_SPEED_THRESHOLD_KN = 3
+SUSTAINED_LOW_SPEED_SECONDS = 120
+
+
+def update_low_speed_streak(low_speed_since, time, speed_kn):
+    """Tracks how long speed_kn has stayed at/below LOW_SPEED_THRESHOLD_KN,
+    for expected_interval_seconds' sustained_low_speed argument — shared
+    between the live VesselUptimeTracker and the offline
+    file_analysis_service, which both need the identical streak logic
+    against the same thresholds (found via review: file_analysis_service
+    had drifted to not tracking this at all, giving it a stricter expected
+    interval than live tracking for the exact same vessel/data).
+
+    low_speed_since is whatever this returned last time (None initially,
+    or whenever speed_kn was last above the threshold — the caller just
+    stores it and passes it back in). Returns (new_low_speed_since,
+    sustained) — sustained is whether the streak has run long enough to
+    relax to the anchored/moored interval.
+    """
+
+    speed_kn = speed_kn if speed_kn is not None else 0
+
+    if speed_kn > LOW_SPEED_THRESHOLD_KN:
+        return None, False
+
+    if low_speed_since is None:
+        low_speed_since = time
+
+    sustained = (time - low_speed_since).total_seconds() >= SUSTAINED_LOW_SPEED_SECONDS
+
+    return low_speed_since, sustained
+
 
 def class_a_interval_seconds(speed_kn, nav_status=None, sustained_low_speed=False):
 

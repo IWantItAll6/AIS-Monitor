@@ -73,6 +73,14 @@ class MainWindow(QMainWindow):
     MIN_GRAPH_ZOOM_SECONDS = 30
     DEFAULT_GRAPH_ZOOM_SECONDS = 600  # first zoom-in step when track_length is Unlimited (no window to start from)
 
+    # How often (in simulated replay time, not wall-clock) to force an
+    # uptime tick during a bulk fast-forward — see tick_vessel_uptime_if_due.
+    # A compromise: fine enough that even a fast vessel's grace window
+    # (Class A at speed: 10s nominal * GRACE_MULTIPLIER = 20s) gets at
+    # least one intermediate tick rather than none at all, without ticking
+    # on literally every line of a dense fast-forward.
+    BULK_TICK_INTERVAL_SECONDS = 15
+
     def __init__(self):
         super().__init__()
 
@@ -161,6 +169,15 @@ class MainWindow(QMainWindow):
 
         # Set by pause_clicked(), consumed by start_clicked() — see there.
         self._paused_remaining_ms = None
+
+        # None outside a bulk fast-forward (Skip to End, a scrub's silent
+        # catch-up) — see begin_bulk_replay()/end_bulk_replay().
+        self._raw_data_buffer = None
+
+        # Set by tick_vessel_uptime() every time it actually runs — read by
+        # tick_vessel_uptime_if_due() during a bulk fast-forward to decide
+        # whether enough simulated time has passed to force another tick.
+        self._last_uptime_tick_time = None
 
         self.last_ais_mmsi = None
 
@@ -664,6 +681,7 @@ class MainWindow(QMainWindow):
             resuming_from_pause = self.current_mode == "Paused" and self._paused_remaining_ms is not None
 
             self.current_mode = "Replay"
+            self.communications_action.setEnabled(True)
 
             if resuming_from_pause:
                 # Pick up the real-time gap to the next batch where it left
@@ -680,6 +698,12 @@ class MainWindow(QMainWindow):
 
         else:
             self.current_mode = "Live"
+
+            # Communications settings can't take effect against an
+            # already-running reader (see MainWindow.show_communications) —
+            # disabled here rather than left silently ineffective.
+            self.communications_action.setEnabled(False)
+
             self.start_live_serial()
 
         self.start_action.setEnabled(False)
@@ -815,6 +839,7 @@ class MainWindow(QMainWindow):
         self.stop_live_serial()
 
         self.current_mode = "Paused"
+        self.communications_action.setEnabled(True)
 
         self.start_action.setEnabled(True)
         self.pause_action.setEnabled(False)
@@ -840,6 +865,7 @@ class MainWindow(QMainWindow):
         self.stop_live_serial()
 
         self.current_mode = "Stopped"
+        self.communications_action.setEnabled(True)
 
         self.start_action.setEnabled(True)
         self.pause_action.setEnabled(False)
@@ -919,14 +945,56 @@ class MainWindow(QMainWindow):
         # Filtering only affects what's shown here — nothing about what
         # gets processed or (once session recording exists) logged to disk.
         if self.should_display_sentence(sentence):
-            self.raw_data.append(line)
+
+            if self._raw_data_buffer is not None:
+                self._raw_data_buffer.append(line)
+            else:
+                self.raw_data.append(line)
 
         timestamp = self.replay.update_time(line)
 
-        if timestamp and hasattr(self,"replay_time_label"):
+        # During a bulk fast-forward this is applied once, at the end (see
+        # end_bulk_replay), instead of on every line — a real cost (a
+        # strftime call plus a Qt label repaint) for a value nothing can
+        # actually see change until the loop finishes anyway.
+        if timestamp and hasattr(self, "replay_time_label") and self._raw_data_buffer is None:
             self.replay_time_label.setText(timestamp.strftime("%Y-%m-%d %H:%M:%S"))
 
+        # Only actually needed during a bulk fast-forward (see
+        # tick_vessel_uptime_if_due's docstring) — outside one, the
+        # real-time seen_timer already ticks every second regardless of
+        # traffic, so this would just be redundant, harmless extra work.
+        if self._raw_data_buffer is not None:
+            self.tick_vessel_uptime_if_due()
+
         self.route_sentence(sentence)
+
+    def begin_bulk_replay(self):
+        """Call before a tight, unpaced fast-forward loop over many lines
+        (Skip to End, a scrub's silent catch-up) — suppresses process_sentence's
+        per-line Raw Data append and replay-time label update, both real
+        costs (profiled: ~2s combined over a 100k-line real capture) for
+        state nothing can actually see mid-loop, applying the final result
+        in one shot via end_bulk_replay() instead. Purely a performance
+        measure — every line's raw text still ends up in Raw Data, just
+        appended in one batch rather than one Qt call per line.
+
+        Also arms tick_vessel_uptime_if_due()'s periodic ticking for the
+        duration of the loop, which is a correctness fix, not a performance
+        one — see its docstring."""
+
+        self._raw_data_buffer = []
+        self._last_uptime_tick_time = self.replay.current_time
+
+    def end_bulk_replay(self):
+
+        if self._raw_data_buffer:
+            self.raw_data.append("\n".join(self._raw_data_buffer))
+
+        self._raw_data_buffer = None
+
+        if self.replay.current_time is not None and hasattr(self, "replay_time_label"):
+            self.replay_time_label.setText(self.replay.current_time.strftime("%Y-%m-%d %H:%M:%S"))
 
     def should_display_sentence(self, sentence):
 
@@ -1780,6 +1848,7 @@ class MainWindow(QMainWindow):
         self.replay.filename = filename
         self.replay.reset()
         self.current_mode = "Replay"
+        self.communications_action.setEnabled(True)
         self.slower_action.setEnabled(True)
         self.faster_action.setEnabled(True)
         self.skip_to_end_action.setEnabled(True)
@@ -1802,16 +1871,22 @@ class MainWindow(QMainWindow):
         # update()/repaint requests triggered along the way into a single
         # repaint once control returns to the event loop, so this is close
         # to as fast as the underlying parsing itself, not bottlenecked by
-        # per-message UI rendering.
+        # per-message UI rendering. begin_bulk_replay() strips out the
+        # other big avoidable cost, per-line Raw Data/time-label updates.
+        self.begin_bulk_replay()
+
         while self.replay.has_next():
 
             line = self.replay.next_line()
 
             self.process_sentence(line)
 
+        self.end_bulk_replay()
+
         self.replay_scrubber.setValue(self.replay.index)
 
         self.current_mode = "Stopped"
+        self.communications_action.setEnabled(True)
 
         self.start_action.setEnabled(True)
         self.pause_action.setEnabled(False)
@@ -1883,8 +1958,12 @@ class MainWindow(QMainWindow):
         # Silently fast-forward (no timer pacing, same technique as Skip to
         # End) up to the start of the animated window — or straight to the
         # target if not animating.
+        self.begin_bulk_replay()
+
         while self.replay.index < preroll_start_index:
             self.process_sentence(self.replay.next_line())
+
+        self.end_bulk_replay()
 
         self._scrub_target_index = target_index
 
@@ -1939,6 +2018,7 @@ class MainWindow(QMainWindow):
         self.replay_scrubber.setValue(self.replay.index)
 
         self.current_mode = "Stopped"
+        self.communications_action.setEnabled(True)
 
         self.start_action.setEnabled(True)
         self.pause_action.setEnabled(False)
@@ -1960,6 +2040,7 @@ class MainWindow(QMainWindow):
         self.replay_scrubber.setEnabled(False)
 
         self.current_mode = "Stopped"
+        self.communications_action.setEnabled(True)
 
         self.update_status()
 
@@ -2241,6 +2322,7 @@ class MainWindow(QMainWindow):
         timeout_seconds = int(timeout_setting) * 60
 
         expired = []
+        expired_labels = {}
 
         for mmsi, vessel in self.registry.vessels.items():
 
@@ -2251,6 +2333,7 @@ class MainWindow(QMainWindow):
 
             if age > timeout_seconds:
                 expired.append(mmsi)
+                expired_labels[mmsi] = vessel.name or str(mmsi)
 
         for mmsi in expired:
             del self.registry.vessels[mmsi]
@@ -2259,10 +2342,21 @@ class MainWindow(QMainWindow):
         # last values forever — update_target_tree()'s selected-vessel
         # refresh (below) finds nothing in the registry for a stale
         # selected_mmsi and just no-ops, leaving the last-rendered text in
-        # place with no corresponding tree row selected.
+        # place with no corresponding tree row selected. Surfaced via the
+        # status bar (not just silently blanked) — otherwise this reads as
+        # the detail panel and its graphs randomly going blank for no
+        # visible reason, most confusing near the end of a long replay
+        # where it's easy to not have noticed the exact moment it happened.
         if self.selected_mmsi in expired:
+
+            label = expired_labels[self.selected_mmsi]
+
             self.selected_mmsi = None
             self.clear_vessel_details()
+
+            self.status_bar.showMessage(
+                f"{label} removed from targets — no data for over {timeout_setting} min", 8000
+            )
 
     def trim_vessel_tracks(self):
 
@@ -2301,6 +2395,33 @@ class MainWindow(QMainWindow):
 
         for vessel in self.registry.vessels.values():
             vessel.uptime_tracker.tick(self.replay.current_time)
+
+        self._last_uptime_tick_time = self.replay.current_time
+
+    def tick_vessel_uptime_if_due(self):
+        """Call after every line during a bulk fast-forward (see
+        begin_bulk_replay) — without periodic ticking, a genuine outage
+        spanning a stretch with no !AIVDM/!AIVDO/$PSMT traffic at all (only
+        e.g. GNSS chatter) never gets an intermediate tick, since only
+        those message types trigger update_target_tree()'s own
+        tick_vessel_uptime() call. That collapses the whole outage's
+        AMBER/RED transition timestamps to the exact instant of the
+        resuming report — a zero-width, invisible segment on the uptime
+        bar — instead of reflecting when the outage actually started.
+        Outside a bulk fast-forward the real-time seen_timer already ticks
+        every second regardless of traffic, so this isn't needed there."""
+
+        if self.replay.current_time is None:
+            return
+
+        if self._last_uptime_tick_time is None:
+            self.tick_vessel_uptime()
+            return
+
+        elapsed = (self.replay.current_time - self._last_uptime_tick_time).total_seconds()
+
+        if elapsed >= self.BULK_TICK_INTERVAL_SECONDS:
+            self.tick_vessel_uptime()
 
     def full_track_window_seconds(self):
         """None for "Unlimited" track length, else the configured window in

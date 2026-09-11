@@ -29,6 +29,11 @@ def test_selected_mmsi_cleared_when_its_vessel_times_out(qapp):
     assert window.selected_mmsi is None
     assert window.detail_mmsi.text() == "-"
 
+    # Found in review: the panel/graphs going blank had no explanation —
+    # indistinguishable from a bug unless the status bar says why.
+    assert "111222333" in window.status_bar.currentMessage()
+    assert "removed" in window.status_bar.currentMessage()
+
 
 def test_selected_mmsi_survives_when_a_different_vessel_times_out(qapp):
 

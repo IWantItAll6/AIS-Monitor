@@ -310,6 +310,37 @@ def test_estimate_tx_loss_class_b_cs_can_go_negative(tmp_path):
     assert vessel.estimated_tx_loss_percent == pytest.approx(-300.0)
 
 
+def test_estimate_tx_loss_relaxes_for_sustained_low_speed_without_anchored_status(tmp_path):
+    """Found in review: this call site didn't track/pass sustained_low_speed
+    at all, so a Class A vessel sitting still with nav_status stuck at its
+    default (not AtAnchor/Moored) got the strict 10s expected interval here
+    even after 120s+, while the live VesselUptimeTracker for the exact same
+    data would have already relaxed to the anchored 180s rate — the two
+    would silently disagree about the same vessel's same recorded session."""
+
+    start = datetime(2026, 1, 1, 0, 0, 0)
+
+    entries = [
+        # Report 1 (t=0): first ever at 0kn - streak just starting, not
+        # sustained yet -> 10s nominal, sets the interval used for gap 1->2.
+        (start, ais_sentence(1, 111111111, 50.0, -5.0, 0.0)),
+        # Report 2 (t=130): 130s into the streak, past
+        # SUSTAINED_LOW_SPEED_SECONDS (120) -> 180s nominal, sets the
+        # interval used for gap 2->3.
+        (start + timedelta(seconds=130), ais_sentence(1, 111111111, 50.0, -5.0, 0.0)),
+        # Report 3 (t=310): 180s after report 2.
+        (start + timedelta(seconds=310), ais_sentence(1, 111111111, 50.0, -5.0, 0.0)),
+    ]
+
+    analyses = analyze_file(write_log(tmp_path, entries))
+    vessel = next(a for a in analyses if a.mmsi == 111111111)
+
+    # gap 1->2: 130s / 10s (report 1's interval) = 13.0
+    # gap 2->3: 180s / 180s (report 2's interval, now relaxed) = 1.0
+    # Without the fix, gap 2->3 would instead be 180s / 10s = 18.0.
+    assert vessel.expected_tx == pytest.approx(14.0)
+
+
 def test_estimate_tx_loss_ignores_unmodeled_message_types(tmp_path):
 
     # A base station (type 4) report sitting between two Class A position
