@@ -239,3 +239,36 @@ def test_uptime_percentage_respects_window_start():
     tracker.tick(at(21))  # red
 
     assert tracker.uptime_percentage(at(41), window_start=at(15)) == 0.0
+
+
+def test_sustained_low_speed_relaxes_to_the_anchored_interval():
+
+    # First low-speed report starts the streak but isn't sustained yet -
+    # still 10s nominal (grace 20s), so a 60s gap goes red.
+    tracker = VesselUptimeTracker()
+    tracker.record_report(at(0), msg_type=1, cs_flag=None, speed_kn=0.0, nav_status="Undefined")
+    tracker.tick(at(60))
+
+    assert tracker.segments(at(60))[-1][2] == UptimeState.RED
+
+    # By t=130 (130s since speed first dropped to 0, past
+    # SUSTAINED_LOW_SPEED_SECONDS=120), a fresh report gets the 180s
+    # anchored-style interval even though nav_status never changed from
+    # "Undefined" - a 150s gap after it should still read green, not red.
+    tracker.record_report(at(130), msg_type=1, cs_flag=None, speed_kn=0.0, nav_status="Undefined")
+    tracker.tick(at(280))
+
+    assert tracker.segments(at(280))[-1][2] == UptimeState.GREEN
+
+
+def test_speed_above_threshold_resets_the_low_speed_streak():
+
+    tracker = VesselUptimeTracker()
+    tracker.record_report(at(0), msg_type=1, cs_flag=None, speed_kn=0.0)
+    tracker.record_report(at(130), msg_type=1, cs_flag=None, speed_kn=10.0)  # streak broken
+    tracker.record_report(at(140), msg_type=1, cs_flag=None, speed_kn=0.0)  # streak restarts here
+
+    # Only 10s into the new streak - not sustained, so back to 10s/20s.
+    tracker.tick(at(200))
+
+    assert tracker.segments(at(200))[-1][2] == UptimeState.RED

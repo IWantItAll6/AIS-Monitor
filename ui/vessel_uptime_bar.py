@@ -1,8 +1,8 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from PySide6.QtWidgets import QWidget, QSizePolicy
 from PySide6.QtGui import QPainter, QColor, QPalette
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import Qt, QRectF, Signal
 
 from services.vessel_uptime import UptimeState
 from ui.time_format import format_age
@@ -13,16 +13,26 @@ STATE_COLORS = {
     UptimeState.RED: QColor("#E74C3C"),
 }
 
-# Worst-state-wins ranking for bucketing multiple ticks/reports into one
-# bar (see draw_bar) — a bucket showing RED means at least one moment
-# inside it was RED, same as Uptime Kuma collapsing multiple checks into
-# one bar. This also fixes a real visibility problem the continuous-fill
-# version had: a report arriving mere milliseconds past the grace window
-# produced a genuinely-recorded but sub-pixel-wide RED sliver that was
-# effectively invisible — bucketing forces that whole bucket red instead.
+# Priority ranking for collapsing multiple ticks/reports into one bucket's
+# single color (see draw_bar/worst_state_in) — NOT a plain "worst wins"
+# severity scale, despite the name matching that pattern:
+#
+# - RED beats everything, always. It means "confirmed missed" (past grace),
+#   and a report arriving mere milliseconds past the grace window produces
+#   a genuinely-recorded but sub-pixel-wide RED sliver that would otherwise
+#   be invisible next to a much wider AMBER/GREEN span in the same bucket —
+#   bucketing exists specifically so that doesn't get lost.
+# - GREEN beats AMBER. AMBER only means "overdue but still within grace",
+#   not "confirmed anything" — if the same bucket also contains a GREEN
+#   (a report that actually arrived, on schedule or resolved before ever
+#   going red), that's positive evidence overriding an otherwise-uncertain
+#   AMBER elsewhere in the same bucket. Without this, a vessel keeping up
+#   just barely — bouncing GREEN/AMBER without ever truly failing — reads
+#   as a solid wall of AMBER instead of "basically fine."
+# - AMBER only wins when it's the *only* state present in the bucket.
 SEVERITY = {
-    UptimeState.GREEN: 0,
-    UptimeState.AMBER: 1,
+    UptimeState.AMBER: 0,
+    UptimeState.GREEN: 1,
     UptimeState.RED: 2,
 }
 
@@ -34,6 +44,9 @@ class VesselUptimeBar(QWidget):
     smooth transitions between states that don't exist). Shares MARGIN and
     the format_age()/"now" labeling convention with RssiGraphWidget so the
     two align when stacked."""
+
+    # See RssiGraphWidget.zoom_requested — same shared zoom, same reason.
+    zoom_requested = Signal(int)
 
     # bar_top(MARGIN) + BAR_HEIGHT + LABEL_BASELINE_OFFSET leaves a few px
     # of clearance below the label's baseline for descenders before HEIGHT
@@ -51,6 +64,12 @@ class VesselUptimeBar(QWidget):
     TARGET_SLOT_WIDTH = 8
     BUCKET_GAP = 2
     CORNER_RADIUS = 1.5
+
+    # Arbitrary but fixed reference point for bucket-grid alignment (see
+    # draw_bar) — any fixed value works, since only *differences* from it
+    # are ever used; picked to predate any real AIS data this app will
+    # ever be pointed at.
+    GRID_EPOCH = datetime(2000, 1, 1)
 
     def __init__(self, parent=None):
 
@@ -82,6 +101,14 @@ class VesselUptimeBar(QWidget):
     def clear(self):
 
         self.set_segments([], None)
+
+    def wheelEvent(self, event):
+
+        direction = 1 if event.angleDelta().y() > 0 else -1
+
+        self.zoom_requested.emit(direction)
+
+        event.accept()
 
     def paintEvent(self, event):
 
@@ -121,27 +148,44 @@ class VesselUptimeBar(QWidget):
         bar_top = self.MARGIN
         bar_bottom = bar_top + self.BAR_HEIGHT
 
+        def x_at(time):
+            return plot_left + ((time - start_time).total_seconds() / duration) * plot_width
+
         bucket_count = max(1, round(plot_width / self.TARGET_SLOT_WIDTH))
-        slot_width = plot_width / bucket_count
-        bucket_seconds = duration / bucket_count
+
+        # window_start (when given) makes the *window itself* a fixed span
+        # ("now" minus the track-length setting) rather than one that grows
+        # every repaint while a vessel's own history is still shorter than
+        # it — using that fixed span, not the data-bounded `duration` above,
+        # keeps bucket_seconds constant across repaints. Without that
+        # (window_start is None under an "Unlimited" track length, which has
+        # no fixed span to anchor to at all), duration is the best available
+        # stand-in, with the same drift this whole scheme otherwise avoids.
+        if self.window_start is not None:
+            window_seconds = (end_time - self.window_start).total_seconds() or 1
+        else:
+            window_seconds = duration
+
+        bucket_seconds = window_seconds / bucket_count
 
         painter.setPen(Qt.PenStyle.NoPen)
 
-        for i in range(bucket_count):
+        first_index = self.bucket_index(start_time, bucket_seconds)
+        last_index = self.bucket_index(end_time, bucket_seconds)
 
-            bucket_start = start_time + timedelta(seconds=i * bucket_seconds)
-            bucket_end = start_time + timedelta(seconds=(i + 1) * bucket_seconds)
+        for index in range(first_index, last_index + 1):
+
+            bucket_start, bucket_end = self.bucket_bounds(index, bucket_seconds)
 
             state = self.worst_state_in(bucket_start, bucket_end)
 
             if state is None:
                 continue
 
-            x0 = plot_left + i * slot_width
+            x0 = x_at(bucket_start)
+            x1 = x_at(bucket_end)
 
-            rect = QRectF(
-                x0 + self.BUCKET_GAP / 2, bar_top, max(slot_width - self.BUCKET_GAP, 1), bar_bottom - bar_top
-            )
+            rect = QRectF(x0 + self.BUCKET_GAP / 2, bar_top, max(x1 - x0 - self.BUCKET_GAP, 1), bar_bottom - bar_top)
 
             painter.setBrush(STATE_COLORS[state])
             painter.drawRoundedRect(rect, self.CORNER_RADIUS, self.CORNER_RADIUS)
@@ -163,20 +207,44 @@ class VesselUptimeBar(QWidget):
         painter.drawText(plot_left, label_y, age_label)
         painter.drawText(plot_right - metrics.horizontalAdvance(now_label), label_y, now_label)
 
+    def bucket_index(self, time, bucket_seconds):
+        """Which fixed-grid bucket `time` falls into, anchored to
+        GRID_EPOCH rather than to this paint's own start_time/duration —
+        the latter re-anchors every repaint as "now" advances, so the same
+        historical moment could land in a different bucket (and a
+        different-*width* bucket, if duration itself was still growing)
+        from one repaint to the next. That showed up as real flicker: a
+        stretch of red visibly changing from spanning 4 buckets to 3 and
+        back, with no underlying data change — just the grid being redrawn
+        from scratch under it each time. Anchoring to a fixed grid means a
+        given moment always maps to the same bucket regardless of when
+        this paints; only the *range* of buckets currently in view shifts
+        as the window slides, old ones scrolling off the left and new ones
+        appearing on the right, exactly like Uptime Kuma's own bars."""
+
+        return int((time - self.GRID_EPOCH).total_seconds() // bucket_seconds)
+
+    def bucket_bounds(self, index, bucket_seconds):
+
+        bucket_start = self.GRID_EPOCH + timedelta(seconds=index * bucket_seconds)
+
+        return bucket_start, bucket_start + timedelta(seconds=bucket_seconds)
+
     def worst_state_in(self, bucket_start, bucket_end):
-        """The most severe state (RED > AMBER > GREEN, see SEVERITY) that
-        overlaps [bucket_start, bucket_end) — None if nothing does, which
+        """The highest-priority state (RED > GREEN > AMBER, see SEVERITY —
+        not a plain worst-wins scale, despite the name) among those
+        overlapping [bucket_start, bucket_end) — None if nothing does, which
         only happens for a bucket entirely before this vessel's earliest
         recorded data (segments are otherwise contiguous with no gaps)."""
 
-        worst = None
+        winner = None
 
         for seg_start, seg_end, state in self.segments:
 
             if seg_end <= bucket_start or seg_start >= bucket_end:
                 continue
 
-            if worst is None or SEVERITY[state] > SEVERITY[worst]:
-                worst = state
+            if winner is None or SEVERITY[state] > SEVERITY[winner]:
+                winner = state
 
-        return worst
+        return winner

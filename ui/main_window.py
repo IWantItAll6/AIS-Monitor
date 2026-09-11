@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QIcon, QCursor, QAction, QKeySequence
+from PySide6.QtGui import QIcon, QCursor, QAction, QKeySequence, QActionGroup
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -48,8 +48,9 @@ from services.geo import calculate_range_bearing, format_distance, convert_dista
 from ui.vessel_tree_item import VesselTreeItem
 from services.replay_service import ReplayService, extract_sentence
 from ui.map_panel import MapPanel
-from ui.rssi_graph import RssiGraphWidget
+from ui.rssi_graph import RssiGraphWidget, MARKER_SHAPES
 from ui.vessel_uptime_bar import VesselUptimeBar
+from ui.time_format import format_duration_short
 from services.theme_service import apply_theme, apply_title_bar_theme
 from services.serial_reader import SerialReaderThread
 from services.network_reader import NetworkAisReader
@@ -63,6 +64,14 @@ class MainWindow(QMainWindow):
     # animation takes in wall-clock time when landing on a scrubbed
     # position, regardless of how much simulated time it covers.
     SCRUB_ANIMATION_MS = 2500
+
+    # RSSI graph / Vessel Uptime bar zoom (see adjust_graph_zoom) — a live,
+    # session-only view preference, not persisted (same as the map's own
+    # zoom level). Multiplicative step, not additive, so it feels like an
+    # equal "amount" of zoom at any scale, same as the map's ZOOM_FACTOR.
+    GRAPH_ZOOM_STEP = 1.5
+    MIN_GRAPH_ZOOM_SECONDS = 30
+    DEFAULT_GRAPH_ZOOM_SECONDS = 600  # first zoom-in step when track_length is Unlimited (no window to start from)
 
     def __init__(self):
         super().__init__()
@@ -105,6 +114,17 @@ class MainWindow(QMainWindow):
         self.registry = VesselRegistry()
 
         self.own_track = deque()
+
+        # Set once an !AIVDO sentence (own-ship's echoed position report,
+        # as opposed to !AIVDM for everyone else's) is seen — lets
+        # MapPanel recolor that one registry entry to match the dedicated
+        # own-ship icon instead of an ordinary vessel color.
+        self.own_mmsi = None
+
+        # None = showing the full track-length window (unzoomed); otherwise
+        # the currently displayed width in seconds for the RSSI graph and
+        # Vessel Uptime bar, which zoom together — see adjust_graph_zoom.
+        self.graph_zoom_seconds = None
 
         self.error_log = ErrorLog()
 
@@ -159,7 +179,7 @@ class MainWindow(QMainWindow):
 
         self.apply_broadcast_settings()
 
-    def create_collapsible_section(self, title, widget, setting_key, default_visible=True):
+    def create_collapsible_section(self, title, widget, setting_key, default_visible=True, extra_header_widget=None):
         """A titled section that can be quickly collapsed via an inline
         "►/▼ Title" button — the same collapse pattern already used for
         Raw Data — while (unlike Raw Data) remembering its shown/hidden
@@ -169,7 +189,10 @@ class MainWindow(QMainWindow):
         action, the same way raw_toggle syncs with show_raw_data_action.
         stats_label sits right-aligned in the same header row (e.g. an
         uptime % or RSSI min/max/avg) so it's visible without spending
-        extra vertical space, and stays visible even while collapsed."""
+        extra vertical space, and stays visible even while collapsed.
+        extra_header_widget, when given, sits between the toggle and the
+        stats label — e.g. the shared graph-zoom controls, to avoid them
+        costing their own row (see setup_ui)."""
 
         container = QWidget()
 
@@ -189,6 +212,10 @@ class MainWindow(QMainWindow):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.addWidget(toggle)
+
+        if extra_header_widget is not None:
+            header_layout.addWidget(extra_header_widget)
+
         header_layout.addStretch()
         header_layout.addWidget(stats_label)
 
@@ -372,8 +399,40 @@ class MainWindow(QMainWindow):
         self.rssi_graph.set_vessel_color(self.settings["vessel_color"])
         self.rssi_graph.set_pinned_color(self.settings["pinned_color"])
 
+        # Shared by the RSSI graph and Vessel Uptime bar below — scroll
+        # over either graph also works (see their zoom_requested signals,
+        # connected below once both widgets exist), this is just the
+        # discoverable/precise alternative, same as the map's zoom buttons.
+        # Sits inline in the RSSI History header (via extra_header_widget)
+        # rather than its own row, to not cost extra vertical space in an
+        # already-tall detail panel.
+        zoom_controls = QWidget()
+
+        zoom_layout = QHBoxLayout()
+        zoom_layout.setContentsMargins(0, 0, 0, 0)
+        zoom_controls.setLayout(zoom_layout)
+
+        self.graph_zoom_out_button = QPushButton("-")
+        self.graph_zoom_out_button.setMaximumWidth(22)
+        self.graph_zoom_out_button.setToolTip("Zoom out (show more history)")
+        zoom_layout.addWidget(self.graph_zoom_out_button)
+
+        self.graph_zoom_label = QLabel("")
+        self.graph_zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.graph_zoom_label.setMinimumWidth(32)
+        zoom_layout.addWidget(self.graph_zoom_label)
+
+        self.graph_zoom_in_button = QPushButton("+")
+        self.graph_zoom_in_button.setMaximumWidth(22)
+        self.graph_zoom_in_button.setToolTip("Zoom in (show less history)")
+        zoom_layout.addWidget(self.graph_zoom_in_button)
+
+        self.graph_zoom_reset_button = QPushButton("Reset")
+        self.graph_zoom_reset_button.setMaximumWidth(48)
+        zoom_layout.addWidget(self.graph_zoom_reset_button)
+
         rssi_container, self.rssi_toggle, self.rssi_stats_label = self.create_collapsible_section(
-            "RSSI History", self.rssi_graph, "show_rssi_graph"
+            "RSSI History", self.rssi_graph, "show_rssi_graph", extra_header_widget=zoom_controls
         )
         target_layout.addWidget(rssi_container)
 
@@ -383,6 +442,15 @@ class MainWindow(QMainWindow):
             "Vessel Uptime", self.uptime_bar, "show_vessel_uptime"
         )
         target_layout.addWidget(uptime_container)
+
+        self.graph_zoom_out_button.clicked.connect(lambda: self.adjust_graph_zoom(self.GRAPH_ZOOM_STEP))
+        self.graph_zoom_in_button.clicked.connect(lambda: self.adjust_graph_zoom(1 / self.GRAPH_ZOOM_STEP))
+        self.graph_zoom_reset_button.clicked.connect(self.reset_graph_zoom)
+
+        self.rssi_graph.zoom_requested.connect(self.on_graph_zoom_wheel)
+        self.uptime_bar.zoom_requested.connect(self.on_graph_zoom_wheel)
+
+        self.update_graph_zoom_label()
 
         self.apply_detail_field_visibility()
 
@@ -903,6 +971,7 @@ class MainWindow(QMainWindow):
             vessel = self.ais_parser.process(sentence, self.replay.current_time)
 
             if vessel:
+                self.own_mmsi = vessel.mmsi
                 self.update_target_tree()
 
         elif sentence.startswith("$PSMT"):
@@ -1080,7 +1149,7 @@ class MainWindow(QMainWindow):
 
         self.targets_label.setText(f"Targets ({len(self.registry.vessels)})")
 
-        self.map_view.update_vessels(list(self.registry.all()), self.own_position, self.own_track)
+        self.map_view.update_vessels(list(self.registry.all()), self.own_position, self.own_track, self.own_mmsi)
 
         self.update_status()
 
@@ -1382,6 +1451,83 @@ class MainWindow(QMainWindow):
         self.help_action.triggered.connect(self.show_help)
         self.error_log_action.triggered.connect(self.show_error_log)
         self.about_action.triggered.connect(self.show_about)
+
+        self.setup_test_menu(view_menu)
+
+    def setup_test_menu(self, view_menu):
+        """Originally a throwaway "Test" menu for comparing three ways to
+        indicate individual RSSI transmissions on RssiGraphWidget (per-gap
+        markers, an endpoint-only marker, and axis ticks) without
+        cluttering a fast-reporting vessel's line — a blanket "always show
+        a cross" approach turned out too busy at high report rates (see
+        git log). Kept under View since it settled into a real, persisted
+        preference rather than a one-off comparison; still no keyboard
+        shortcuts, still fair game to prune down to whichever combination
+        wins out."""
+
+        rssi_menu = view_menu.addMenu("RSSI Markers")
+
+        self.rssi_point_markers_action = rssi_menu.addAction("Per-Gap Markers")
+        self.rssi_point_markers_action.setCheckable(True)
+        self.rssi_point_markers_action.setChecked(self.settings.get("rssi_marker_points", False))
+
+        self.rssi_endpoint_marker_action = rssi_menu.addAction("Endpoint Marker")
+        self.rssi_endpoint_marker_action.setCheckable(True)
+        self.rssi_endpoint_marker_action.setChecked(self.settings.get("rssi_marker_endpoint", False))
+
+        self.rssi_axis_ticks_action = rssi_menu.addAction("Axis Ticks")
+        self.rssi_axis_ticks_action.setCheckable(True)
+        self.rssi_axis_ticks_action.setChecked(self.settings.get("rssi_marker_axis_ticks", False))
+
+        rssi_menu.addSeparator()
+
+        shape_menu = rssi_menu.addMenu("Marker Shape")
+
+        shape_group = QActionGroup(self)
+        shape_group.setExclusive(True)
+
+        saved_shape = self.settings.get("rssi_marker_shape", "circle")
+
+        self.rssi_shape_actions = {}
+
+        for shape in MARKER_SHAPES:
+
+            action = shape_menu.addAction(shape.capitalize())
+            action.setCheckable(True)
+            action.setChecked(shape == saved_shape)
+
+            shape_group.addAction(action)
+            self.rssi_shape_actions[action] = shape
+
+        for action in [
+            self.rssi_point_markers_action,
+            self.rssi_endpoint_marker_action,
+            self.rssi_axis_ticks_action,
+            *self.rssi_shape_actions,
+        ]:
+            action.triggered.connect(self.apply_rssi_marker_test_options)
+
+        # Applied here (not left to wait for the first toggle) so a
+        # previously-saved choice actually takes effect on launch.
+        self.apply_rssi_marker_test_options()
+
+    def apply_rssi_marker_test_options(self):
+
+        shape = next((shape for action, shape in self.rssi_shape_actions.items() if action.isChecked()), "circle")
+
+        self.settings["rssi_marker_points"] = self.rssi_point_markers_action.isChecked()
+        self.settings["rssi_marker_endpoint"] = self.rssi_endpoint_marker_action.isChecked()
+        self.settings["rssi_marker_axis_ticks"] = self.rssi_axis_ticks_action.isChecked()
+        self.settings["rssi_marker_shape"] = shape
+
+        SettingsService.save(self.settings)
+
+        self.rssi_graph.set_marker_options(
+            self.rssi_point_markers_action.isChecked(),
+            self.rssi_endpoint_marker_action.isChecked(),
+            self.rssi_axis_ticks_action.isChecked(),
+            shape,
+        )
 
     def show_help(self):
 
@@ -1950,14 +2096,20 @@ class MainWindow(QMainWindow):
         self.detail_length.setText("-" if vessel.length is None else f"{vessel.length} m")
         self.detail_beam.setText("-" if vessel.beam is None else f"{vessel.beam} m")
 
-        self.rssi_graph.set_history(vessel.rssi_history, self.replay.current_time, vessel.pinned)
+        window_start = (
+            self.graph_window_start(self.replay.current_time) if self.replay.current_time is not None else None
+        )
 
-        rssi_stats = RssiGraphWidget.compute_stats(vessel.rssi_history)
+        self.rssi_graph.set_history(vessel.rssi_history, self.replay.current_time, vessel.pinned, window_start)
+
+        visible_rssi_history = (
+            [(t, r) for t, r in vessel.rssi_history if t >= window_start]
+            if window_start is not None else list(vessel.rssi_history)
+        )
+        rssi_stats = RssiGraphWidget.compute_stats(visible_rssi_history)
         self.rssi_stats_label.setText(self.format_rssi_stats(rssi_stats))
 
         if self.replay.current_time is not None:
-
-            window_start = self.track_window_start(self.replay.current_time)
 
             self.uptime_bar.set_segments(
                 vessel.uptime_tracker.segments(self.replay.current_time), self.replay.current_time, window_start
@@ -2005,6 +2157,7 @@ class MainWindow(QMainWindow):
 
         self.last_ais_mmsi = None
         self.own_track = deque()
+        self.own_mmsi = None
 
         # A fresh dict, not a mutation — self.own_position may still be the
         # same object GNSSParser handed back from process(), and reassigning
@@ -2149,20 +2302,109 @@ class MainWindow(QMainWindow):
         for vessel in self.registry.vessels.values():
             vessel.uptime_tracker.tick(self.replay.current_time)
 
-    def track_window_start(self, now):
-        """None for "Unlimited" track length, else `now` minus the
-        configured window — shared by trim_vessel_uptime's cutoff and the
-        uptime bar's display window (VesselUptimeBar.set_segments) so the
-        two always agree on what "the window" means."""
+    def full_track_window_seconds(self):
+        """None for "Unlimited" track length, else the configured window in
+        seconds. Split out from track_window_start so adjust_graph_zoom can
+        clamp the zoom level to it without duplicating the settings lookup."""
 
         track_length_setting = self.settings.get("track_length", "10")
 
         if track_length_setting == "Unlimited":
             return None
 
-        track_seconds = int(track_length_setting) * 60
+        return int(track_length_setting) * 60
 
-        return now - timedelta(seconds=track_seconds)
+    def track_window_start(self, now):
+        """None for "Unlimited" track length, else `now` minus the
+        configured window — used only for actual data retention
+        (trim_vessel_uptime, trim_vessel_tracks, etc.), which must stay
+        tied to the track length setting regardless of the live graph zoom
+        level. For how much of that retained history is currently
+        *displayed*, see graph_window_start instead."""
+
+        full_seconds = self.full_track_window_seconds()
+
+        if full_seconds is None:
+            return None
+
+        return now - timedelta(seconds=full_seconds)
+
+    def graph_window_start(self, now):
+        """Like track_window_start, but narrowed by the live zoom level
+        (see adjust_graph_zoom) — this is what the RSSI graph and Vessel
+        Uptime bar actually display, and track_window_start (unaffected by
+        zoom) is still what bounds it: zooming in only shows less of the
+        retained history, it never retains less."""
+
+        full_start = self.track_window_start(now)
+
+        if self.graph_zoom_seconds is None:
+            return full_start
+
+        zoomed_start = now - timedelta(seconds=self.graph_zoom_seconds)
+
+        if full_start is not None:
+            return max(zoomed_start, full_start)
+
+        return zoomed_start
+
+    def on_graph_zoom_wheel(self, direction):
+
+        factor = (1 / self.GRAPH_ZOOM_STEP) if direction > 0 else self.GRAPH_ZOOM_STEP
+
+        self.adjust_graph_zoom(factor)
+
+    def adjust_graph_zoom(self, factor):
+        """factor < 1 zooms in (shorter displayed window), factor > 1 zooms
+        out (longer window, up to the full track-length setting — can't
+        zoom out past what's actually retained). Snaps back to None (the
+        unzoomed "full window" state) once zooming out would reach or
+        exceed that full window anyway, so Reset isn't the only way back
+        to it."""
+
+        current_seconds = self.graph_zoom_seconds or self.full_track_window_seconds() or self.DEFAULT_GRAPH_ZOOM_SECONDS
+
+        new_seconds = max(current_seconds * factor, self.MIN_GRAPH_ZOOM_SECONDS)
+
+        full_seconds = self.full_track_window_seconds()
+
+        if full_seconds is not None and new_seconds >= full_seconds:
+            self.graph_zoom_seconds = None
+        else:
+            self.graph_zoom_seconds = new_seconds
+
+        self.update_graph_zoom_label()
+        self.refresh_selected_vessel_graphs()
+
+    def reset_graph_zoom(self):
+
+        self.graph_zoom_seconds = None
+
+        self.update_graph_zoom_label()
+        self.refresh_selected_vessel_graphs()
+
+    def update_graph_zoom_label(self):
+
+        if self.graph_zoom_seconds is not None:
+            self.graph_zoom_label.setText(format_duration_short(self.graph_zoom_seconds))
+            return
+
+        full_seconds = self.full_track_window_seconds()
+
+        self.graph_zoom_label.setText(format_duration_short(full_seconds) if full_seconds is not None else "Full")
+
+    def refresh_selected_vessel_graphs(self):
+        """Applies a new zoom level immediately rather than waiting for the
+        next tick/message to happen to refresh the currently-selected
+        vessel's graphs."""
+
+        if self.selected_mmsi is None:
+            return
+
+        vessel = self.registry.get(self.selected_mmsi)
+
+        if vessel:
+            self.show_vessel_details(vessel)
 
     def trim_vessel_uptime(self):
 

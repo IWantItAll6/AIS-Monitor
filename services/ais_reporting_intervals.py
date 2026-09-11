@@ -7,7 +7,12 @@
 # Class A's anchored/moored slow-down (3min at <=3kn while anchored/moored,
 # vs. the 10s "0-14kn" rate otherwise) IS modeled, via nav_status — that
 # field is decoded directly from the message itself (parsers/ais_parser.py),
-# not inferred, so there's no approximation cost to using it.
+# not inferred, so there's no approximation cost to using it. Also applied
+# when nav_status *doesn't* say AtAnchor/Moored but speed has stayed low for
+# a while (see VesselUptimeTracker's sustained_low_speed tracking) — real
+# nav_status is frequently left at its default/"Undefined" value by crews
+# regardless of the vessel's actual state, so requiring it literally missed
+# a lot of vessels that were plainly sitting still for many minutes.
 #
 # Still deliberately NOT modeled (same simplification scripts/generate_sample_log.py
 # already makes, for the same reason): the faster "actively changing course"
@@ -30,9 +35,9 @@ CLASS_B_MSG_TYPES = (18, 19)
 CLASS_A_ANCHORED_NAV_STATUSES = ("AtAnchor", "Moored")
 
 
-def class_a_interval_seconds(speed_kn, nav_status=None):
+def class_a_interval_seconds(speed_kn, nav_status=None, sustained_low_speed=False):
 
-    if nav_status in CLASS_A_ANCHORED_NAV_STATUSES and speed_kn <= 3:
+    if speed_kn <= 3 and (nav_status in CLASS_A_ANCHORED_NAV_STATUSES or sustained_low_speed):
         return 180
 
     if speed_kn > 23:
@@ -66,7 +71,7 @@ def class_b_cs_interval_seconds(speed_kn):
     return 180
 
 
-def expected_interval_seconds(msg_type, cs_flag, speed_kn, nav_status=None):
+def expected_interval_seconds(msg_type, cs_flag, speed_kn, nav_status=None, sustained_low_speed=False):
     """The nominal seconds-between-reports a station transmitting msg_type
     at speed_kn should be reporting at, per ITU-R M.1371 — or None if
     msg_type has no modeled reporting-rate rule (static/AtoN/base-station
@@ -78,15 +83,16 @@ def expected_interval_seconds(msg_type, cs_flag, speed_kn, nav_status=None):
     estimate entirely, and 0 is the conservative (slowest, most lenient)
     assumption.
 
-    nav_status only affects Class A (see CLASS_A_ANCHORED_NAV_STATUSES) —
-    Class B's tables already condition on low speed alone for their slowest
-    tier, with no separate anchored/moored rule to distinguish.
+    nav_status and sustained_low_speed only affect Class A (see
+    CLASS_A_ANCHORED_NAV_STATUSES) — Class B's tables already condition on
+    low speed alone for their slowest tier, with no separate anchored/moored
+    rule to distinguish.
     """
 
     speed_kn = speed_kn or 0
 
     if msg_type in CLASS_A_MSG_TYPES:
-        return class_a_interval_seconds(speed_kn, nav_status)
+        return class_a_interval_seconds(speed_kn, nav_status, sustained_low_speed)
 
     if msg_type == 18:
         return class_b_cs_interval_seconds(speed_kn) if cs_flag else class_b_sotdma_interval_seconds(speed_kn)

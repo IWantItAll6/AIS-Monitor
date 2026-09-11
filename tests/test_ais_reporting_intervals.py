@@ -69,6 +69,28 @@ def test_class_b_ignores_nav_status_since_speed_alone_already_covers_it():
     assert expected_interval_seconds(18, False, 10, "AtAnchor") == 30
 
 
+def test_sustained_low_speed_gets_the_anchored_rate_without_nav_status():
+
+    # sustained_low_speed stands in for nav_status when a vessel's own
+    # status field doesn't say AtAnchor/Moored (e.g. left at "Undefined")
+    # but it's plainly been sitting still for a while.
+    assert expected_interval_seconds(1, None, 0, "Undefined", True) == 180
+    assert expected_interval_seconds(1, None, 3, None, True) == 180
+
+
+def test_sustained_low_speed_ignored_above_the_speed_threshold():
+
+    # Still gated on <=3kn even if sustained_low_speed is (incorrectly, by
+    # whatever's calling this) passed as True.
+    assert expected_interval_seconds(1, None, 3.1, None, True) == 10
+
+
+def test_sustained_low_speed_is_a_class_a_only_concept():
+
+    assert expected_interval_seconds(18, False, 0, None, True) == 180  # already 180 via speed alone
+    assert expected_interval_seconds(18, True, 10, None, True) == 30  # unaffected either way
+
+
 @pytest.mark.parametrize("msg_type", [4, 5, 21, 24, 999])
 def test_unmodeled_message_types_return_none(msg_type):
 

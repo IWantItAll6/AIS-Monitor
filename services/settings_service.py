@@ -51,6 +51,11 @@ class SettingsService:
         "show_place_names": True,
         "show_rssi_graph": True,
         "show_vessel_uptime": True,
+
+        "rssi_marker_points": False,
+        "rssi_marker_endpoint": False,
+        "rssi_marker_axis_ticks": False,
+        "rssi_marker_shape": "circle",
         "coastal_towns_only": False,
         "coastal_threshold_nm": "5",
 

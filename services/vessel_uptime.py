@@ -11,6 +11,16 @@ from services.ais_reporting_intervals import expected_interval_seconds
 # spirit as ais_reporting_intervals.py's own simplifications.
 GRACE_MULTIPLIER = 2.0
 
+# How slow, and for how long, before a Class A vessel not explicitly
+# reporting AtAnchor/Moored still gets treated as if it were — real-world
+# nav_status is frequently left at its default ("Undefined") regardless of
+# the vessel's actual state, so requiring it literally misses vessels that
+# are plainly sitting still. Time-based (not "N consecutive reports") since
+# real report spacing is irregular — a count could take an arbitrarily long
+# or short wall-clock time to reach depending on how sparse reception is.
+LOW_SPEED_THRESHOLD_KN = 3
+SUSTAINED_LOW_SPEED_SECONDS = 120
+
 
 class UptimeState(Enum):
     GREEN = "green"
@@ -40,6 +50,12 @@ class VesselUptimeTracker:
 
         self._last_report_time = None
         self._last_interval_seconds = None
+
+        # When the vessel's speed most recently dropped to/below
+        # LOW_SPEED_THRESHOLD_KN and has stayed there ever since — reset to
+        # None the moment a report comes in above that threshold. See
+        # record_report()'s use of it for why.
+        self._low_speed_since = None
 
     def _current_state(self, now):
 
@@ -81,9 +97,28 @@ class VesselUptimeTracker:
         transmission (busy-channel slot contention, etc.) — so the AMBER
         period is retroactively folded back into GREEN rather than left as
         a false "degraded" mark.
+
+        Also tracks how long speed_kn has stayed at/below
+        LOW_SPEED_THRESHOLD_KN, independent of nav_status, so a Class A
+        vessel that's plainly been sitting still for a while gets the
+        anchored/moored 180s interval even if its nav_status is stuck on
+        "Undefined" (common in practice — see ais_reporting_intervals.py).
         """
 
-        interval = expected_interval_seconds(msg_type, cs_flag, speed_kn, nav_status)
+        speed_for_streak = speed_kn if speed_kn is not None else 0
+
+        if speed_for_streak <= LOW_SPEED_THRESHOLD_KN:
+
+            if self._low_speed_since is None:
+                self._low_speed_since = time
+
+            sustained_low_speed = (time - self._low_speed_since).total_seconds() >= SUSTAINED_LOW_SPEED_SECONDS
+
+        else:
+            self._low_speed_since = None
+            sustained_low_speed = False
+
+        interval = expected_interval_seconds(msg_type, cs_flag, speed_kn, nav_status, sustained_low_speed)
 
         # Not a report type with a modeled reporting-rate rule (static
         # data, base station, AtoN) — nothing to compare, so this vessel's

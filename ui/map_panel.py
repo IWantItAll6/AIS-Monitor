@@ -167,6 +167,7 @@ class MapPanel(QWidget):
         self.vessels = []
         self.own_position = {"lat": None, "lon": None, "fix": False}
         self.own_track = []
+        self.own_mmsi = None
         self.distance_unit = "NM"
         self.scrub_animating = False
         self.empty_hint = False
@@ -258,6 +259,17 @@ class MapPanel(QWidget):
 
     def _marker_color(self, vessel):
 
+        # Own-ship's AIVDO echo is tracked as an ordinary registry vessel
+        # (see MainWindow.route_sentence) purely so its SOG/COG populate the
+        # detail panel — but left to the normal color rules below, it drew
+        # as a second, ordinary-colored marker/label sitting right on top of
+        # the dedicated blue own-ship icon (drawn separately, from the GNSS
+        # fix), which looked like an unrelated contact rather than the same
+        # ship. Matching it to OWN_SHIP_COLOR here reads as "this is you"
+        # instead. Checked first — takes priority even over pinning.
+        if self.own_mmsi is not None and vessel.mmsi == self.own_mmsi:
+            return self.OWN_SHIP_COLOR
+
         # SART/MOB/EPIRB use their own fixed alarm-red/pinned-magenta pair
         # rather than the configurable vessel colors — computed here once
         # so every place a vessel's color is needed (marker, track) agrees,
@@ -323,11 +335,12 @@ class MapPanel(QWidget):
 
         self.update()
 
-    def update_vessels(self, vessels, own_position, own_track):
+    def update_vessels(self, vessels, own_position, own_track, own_mmsi=None):
 
         self.vessels = vessels
         self.own_track = own_track
         self.own_position = own_position
+        self.own_mmsi = own_mmsi
 
         self.update()
 

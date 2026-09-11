@@ -6,14 +6,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QTreeWidget,
-    QHeaderView,
     QPushButton,
     QLabel,
     QDialogButtonBox,
     QFileDialog
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QFontMetrics
 
 from ui.vessel_tree_item import VesselTreeItem
 from services.geo import convert_distance, UNIT_SUFFIX
@@ -108,6 +107,12 @@ class FileAnalysisDialog(QDialog):
     applies here) plus a CSV export, following the same
     QFileDialog.getSaveFileName pattern as MainWindow.export_targets_csv."""
 
+    # Breathing room added on top of the widest header/cell text in
+    # fit_columns_to_contents() — enough for the column to not feel
+    # cramped against its neighbor, without reintroducing the bloat that
+    # method replaces resizeColumnToContents() to get rid of.
+    COLUMN_PADDING = 16
+
     def __init__(self, filename, analyses, distance_unit="NM"):
 
         super().__init__()
@@ -154,11 +159,11 @@ class FileAnalysisDialog(QDialog):
 
         header = self.tree.header()
         header.setStretchLastSection(False)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
 
         layout.addWidget(self.tree)
 
         self.populate()
+        self.fit_columns_to_contents()
 
         button_layout = QHBoxLayout()
 
@@ -202,8 +207,28 @@ class FileAnalysisDialog(QDialog):
 
             self.tree.addTopLevelItem(item)
 
-        for column in range(self.tree.columnCount()):
-            self.tree.resizeColumnToContents(column)
+    def fit_columns_to_contents(self):
+        """Sizes every column to its own widest header/cell text, measured
+        directly via QFontMetrics rather than QTreeWidget's built-in
+        resizeColumnToContents() — that one reserves a fixed chunk of extra
+        width per column (icon/decoration space QTreeWidgetItem budgets for
+        even with no icon ever set), which barely shows on a wide column
+        but is a large fraction of a narrow one's own width (e.g. "Loss %"
+        or "Min RSSI"), making short columns look padded far beyond their
+        actual text."""
+
+        header_metrics = QFontMetrics(self.tree.header().font())
+        item_metrics = QFontMetrics(self.tree.font())
+
+        for column, label in enumerate(self.column_labels()):
+
+            widest = header_metrics.horizontalAdvance(label)
+
+            for row in range(self.tree.topLevelItemCount()):
+                text = self.tree.topLevelItem(row).text(column)
+                widest = max(widest, item_metrics.horizontalAdvance(text))
+
+            self.tree.setColumnWidth(column, widest + self.COLUMN_PADDING)
 
     def export_csv(self):
 
