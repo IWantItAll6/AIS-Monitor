@@ -220,7 +220,9 @@ def analyze_file(filename, cancel_event=None, progress_callback=None, progress_i
                             range_nm if analysis.range_max_nm is None else max(analysis.range_max_nm, range_nm)
                         )
 
-                interval = expected_interval_seconds(ais_parser.last_msg_type, ais_parser.last_cs, vessel.sog)
+                interval = expected_interval_seconds(
+                    ais_parser.last_msg_type, ais_parser.last_cs, vessel.sog, vessel.nav_status
+                )
 
                 # A report type with no modeled reporting-rate rule (static
                 # data, base station, AtoN) can't be compared — skip it

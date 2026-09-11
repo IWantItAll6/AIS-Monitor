@@ -11,6 +11,14 @@ class SettingsService:
         "ais_port": "",
         "ais_baud": "38400",
 
+        # "Serial" (COM port, the fields above) or "Network" (a TCP
+        # connection, the fields below) — mutually exclusive ways to get
+        # AIS data in, for receivers that expose their data over WiFi
+        # instead of (or as well as) a serial port.
+        "ais_source_type": "Serial",
+        "ais_network_host": "",
+        "ais_network_port": "10110",
+
         "use_separate_gnss": False,
 
         "gnss_port": "",
@@ -18,6 +26,11 @@ class SettingsService:
 
         "ais_serial_format": "8N1",
         "gnss_serial_format": "8N1",
+
+        # 10110 is the de facto NMEA-over-TCP port OpenCPN and similar
+        # marine software expect by default.
+        "broadcast_enabled": False,
+        "broadcast_port": "10110",
 
         "theme": "Dark",
 
@@ -37,6 +50,7 @@ class SettingsService:
 
         "show_place_names": True,
         "show_rssi_graph": True,
+        "show_vessel_uptime": True,
         "coastal_towns_only": False,
         "coastal_threshold_nm": "5",
 

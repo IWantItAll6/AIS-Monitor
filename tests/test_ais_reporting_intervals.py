@@ -39,6 +39,36 @@ def test_none_speed_treated_as_stationary():
     assert expected_interval_seconds(18, False, None) == 180
 
 
+@pytest.mark.parametrize("nav_status", ["AtAnchor", "Moored"])
+def test_class_a_anchored_or_moored_slows_to_three_minutes(nav_status):
+
+    assert expected_interval_seconds(1, None, 0, nav_status) == 180
+    assert expected_interval_seconds(2, None, 3, nav_status) == 180
+
+    # Above 3kn, the anchored/moored rule no longer applies even if the
+    # station is still reporting that nav_status (e.g. dragging anchor).
+    assert expected_interval_seconds(3, None, 3.1, nav_status) == 10
+
+
+def test_class_a_anchored_nav_status_ignored_without_matching_speed_rule():
+
+    # A nav_status of "AtAnchor" alone isn't enough without also being
+    # <=3kn — matches the ITU-R table's compound condition.
+    assert expected_interval_seconds(1, None, 10, "AtAnchor") == 10
+
+
+def test_class_a_underway_nav_status_does_not_get_the_anchored_rate():
+
+    assert expected_interval_seconds(1, None, 0, "UnderWayUsingEngine") == 10
+
+
+def test_class_b_ignores_nav_status_since_speed_alone_already_covers_it():
+
+    # Passing nav_status for Class B is a no-op — its tables already use
+    # speed alone for the slow tier.
+    assert expected_interval_seconds(18, False, 10, "AtAnchor") == 30
+
+
 @pytest.mark.parametrize("msg_type", [4, 5, 21, 24, 999])
 def test_unmodeled_message_types_return_none(msg_type):
 

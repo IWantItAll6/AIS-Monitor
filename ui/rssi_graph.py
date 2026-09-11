@@ -2,6 +2,8 @@ from PySide6.QtWidgets import QWidget, QSizePolicy
 from PySide6.QtGui import QPainter, QColor, QPen, QPalette
 from PySide6.QtCore import Qt, QPointF
 
+from ui.time_format import format_age
+
 
 class RssiGraphWidget(QWidget):
     """Small hand-drawn sparkline of a vessel's RSSI over time — kept as a
@@ -117,28 +119,6 @@ class RssiGraphWidget(QWidget):
 
         return scale_min, scale_max
 
-    @staticmethod
-    def format_age(seconds):
-        """754 -> "12m ago". Deliberately coarser than
-        file_analysis_service.format_duration (which keeps both hours and
-        minutes, or minutes and seconds) — this label only needs to orient
-        the viewer ("that end is a while back"), not give a precise reading,
-        and staying to one unit keeps it short enough to fit the corner."""
-
-        seconds = int(seconds)
-
-        if seconds < 60:
-            return f"{seconds}s ago"
-
-        minutes = seconds // 60
-
-        if minutes < 60:
-            return f"{minutes}m ago"
-
-        hours = minutes // 60
-
-        return f"{hours}h ago"
-
     def draw_graph(self, painter):
 
         values = [rssi for _, rssi in self.history]
@@ -214,7 +194,7 @@ class RssiGraphWidget(QWidget):
         # having just jumped to an arbitrary point in a long replay — newest
         # data is on the right (to_point() maps start_time to plot_left,
         # end_time to plot_right), so labeled accordingly here.
-        age_label = self.format_age(duration)
+        age_label = format_age(duration)
         now_label = "now"
 
         painter.drawText(plot_left, plot_bottom - 2, age_label)

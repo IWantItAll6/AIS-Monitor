@@ -163,20 +163,30 @@ class SerialTestThread(QThread):
 
         connection.close()
 
-        # Printable ASCII + CR/LF/TAB is what real NMEA traffic looks like
-        # at the byte level — a low ratio here usually means a baud/parity
-        # mismatch rather than "no data", since a wrong baud still reads
-        # *something*, just garbled.
-        printable = sum(1 for b in raw_bytes if 32 <= b <= 126 or b in (9, 10, 13))
-        printable_ratio = (printable / len(raw_bytes)) if raw_bytes else 0.0
+        self.test_finished.emit(analyze_reception(raw_bytes))
 
-        text = raw_bytes.decode("ascii", errors="replace")
-        found_nmea = any(looks_like_nmea(line) for line in text.splitlines())
 
-        self.test_finished.emit({
-            "success": True,
-            "error": None,
-            "byte_count": len(raw_bytes),
-            "printable_ratio": printable_ratio,
-            "found_nmea": found_nmea
-        })
+def analyze_reception(raw_bytes):
+    """Turns a raw byte capture from a connection test into the
+    success/byte_count/printable_ratio/found_nmea dict the Communications
+    dialog's test-status messages are built from — shared by SerialTestThread
+    and NetworkTestThread (services/network_reader.py) so both connection
+    kinds get identical "does this look like real NMEA traffic" judgement."""
+
+    # Printable ASCII + CR/LF/TAB is what real NMEA traffic looks like at
+    # the byte level — a low ratio here usually means a baud/parity (serial)
+    # or wrong-port (network) mismatch rather than "no data", since a wrong
+    # setting still reads *something*, just garbled.
+    printable = sum(1 for b in raw_bytes if 32 <= b <= 126 or b in (9, 10, 13))
+    printable_ratio = (printable / len(raw_bytes)) if raw_bytes else 0.0
+
+    text = raw_bytes.decode("ascii", errors="replace")
+    found_nmea = any(looks_like_nmea(line) for line in text.splitlines())
+
+    return {
+        "success": True,
+        "error": None,
+        "byte_count": len(raw_bytes),
+        "printable_ratio": printable_ratio,
+        "found_nmea": found_nmea
+    }

@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from collections import deque
 
+from services.vessel_uptime import VesselUptimeTracker
+
 
 @dataclass
 class Vessel:
@@ -28,6 +30,8 @@ class Vessel:
 
     rssi: int | None = None
     rssi_history: deque = field(default_factory=deque)
+
+    uptime_tracker: VesselUptimeTracker = field(default_factory=VesselUptimeTracker)
 
     last_seen: datetime = field(default_factory=datetime.now)
     track: deque = field(default_factory=deque)

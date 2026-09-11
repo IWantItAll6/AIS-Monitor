@@ -49,9 +49,12 @@ from ui.vessel_tree_item import VesselTreeItem
 from services.replay_service import ReplayService, extract_sentence
 from ui.map_panel import MapPanel
 from ui.rssi_graph import RssiGraphWidget
+from ui.vessel_uptime_bar import VesselUptimeBar
 from services.theme_service import apply_theme, apply_title_bar_theme
 from services.serial_reader import SerialReaderThread
+from services.network_reader import NetworkAisReader
 from services.session_recorder import SessionRecorder
+from services.broadcast_server import BroadcastServer
 
 
 class MainWindow(QMainWindow):
@@ -81,6 +84,10 @@ class MainWindow(QMainWindow):
 
         self.serial_readers = []
         self.recorder = SessionRecorder(self.settings["recordings_folder"])
+
+        self.broadcast_client_count = 0
+        self.broadcast_server = BroadcastServer()
+        self.broadcast_server.client_count_changed.connect(self.on_broadcast_client_count_changed)
 
         # update_status() runs very frequently (every seen_timer tick and
         # every AIS message via update_target_tree), so a plain timed
@@ -149,6 +156,46 @@ class MainWindow(QMainWindow):
 
         self._scrub_target_index = None
         self._scrub_lines_per_frame = 1
+
+        self.apply_broadcast_settings()
+
+    def create_collapsible_section(self, title, widget, setting_key, default_visible=True):
+        """A titled section that can be quickly collapsed via an inline
+        "►/▼ Title" button — the same collapse pattern already used for
+        Raw Data — while (unlike Raw Data) remembering its shown/hidden
+        state across restarts via settings[setting_key]. Returns
+        (container, toggle_button); the toggle is also handed back so
+        callers can bidirectionally sync it with a View-menu action, the
+        same way raw_toggle syncs with show_raw_data_action."""
+
+        container = QWidget()
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        container.setLayout(layout)
+
+        visible = self.settings.get(setting_key, default_visible)
+
+        toggle = QPushButton(("▼ " if visible else "► ") + title)
+        toggle.setCheckable(True)
+        toggle.setChecked(visible)
+        layout.addWidget(toggle)
+
+        widget.setVisible(visible)
+        layout.addWidget(widget)
+
+        def on_toggled(checked):
+
+            toggle.setText(("▼ " if checked else "► ") + title)
+            widget.setVisible(checked)
+
+            self.settings[setting_key] = checked
+
+            SettingsService.save(self.settings)
+
+        toggle.toggled.connect(on_toggled)
+
+        return container, toggle
 
     def setup_ui(self):
         central = QWidget()
@@ -308,26 +355,21 @@ class MainWindow(QMainWindow):
 
         target_layout.addWidget(details_widget)
 
-        self.rssi_graph_container = QWidget()
-
-        rssi_graph_layout = QVBoxLayout()
-        rssi_graph_layout.setContentsMargins(0, 0, 0, 0)
-        self.rssi_graph_container.setLayout(rssi_graph_layout)
-
-        rssi_graph_title = QLabel("RSSI History")
-        font = rssi_graph_title.font()
-        font.setBold(True)
-        rssi_graph_title.setFont(font)
-        rssi_graph_layout.addWidget(rssi_graph_title)
-
         self.rssi_graph = RssiGraphWidget()
         self.rssi_graph.set_vessel_color(self.settings["vessel_color"])
         self.rssi_graph.set_pinned_color(self.settings["pinned_color"])
-        rssi_graph_layout.addWidget(self.rssi_graph)
 
-        self.rssi_graph_container.setVisible(self.settings.get("show_rssi_graph", True))
+        rssi_container, self.rssi_toggle = self.create_collapsible_section(
+            "RSSI History", self.rssi_graph, "show_rssi_graph"
+        )
+        target_layout.addWidget(rssi_container)
 
-        target_layout.addWidget(self.rssi_graph_container)
+        self.uptime_bar = VesselUptimeBar()
+
+        uptime_container, self.uptime_toggle = self.create_collapsible_section(
+            "Vessel Uptime", self.uptime_bar, "show_vessel_uptime"
+        )
+        target_layout.addWidget(uptime_container)
 
         self.apply_detail_field_visibility()
 
@@ -570,7 +612,7 @@ class MainWindow(QMainWindow):
         self.recorder.start()
         self.warn_if_recordings_folder_large()
 
-        self.serial_readers = [self.make_serial_reader("ais")]
+        self.serial_readers = [self.make_ais_reader()]
 
         if self.settings.get("use_separate_gnss"):
             self.serial_readers.append(self.make_serial_reader("gnss"))
@@ -615,6 +657,25 @@ class MainWindow(QMainWindow):
 
         return reader
 
+    def make_ais_reader(self):
+
+        # Serial and Network are mutually exclusive AIS input sources (see
+        # CommunicationsDialog) — never both readers running at once for
+        # AIS, unlike GNSS which is a separate, always-serial concern.
+        if self.settings.get("ais_source_type") == "Network":
+
+            reader = NetworkAisReader(
+                self.settings.get("ais_network_host", ""),
+                int(self.settings.get("ais_network_port", "10110"))
+            )
+
+            reader.line_received.connect(self.on_live_line_received)
+            reader.error_occurred.connect(self.on_serial_error)
+
+            return reader
+
+        return self.make_serial_reader("ais")
+
     def stop_live_serial(self):
 
         # Signal every reader to stop before blocking on any of them —
@@ -639,6 +700,12 @@ class MainWindow(QMainWindow):
         timestamped = f"[{datetime.now():%Y-%m-%d %H:%M:%S.%f}] {line}"
 
         self.recorder.write(timestamped)
+
+        # The bare sentence, not the "[timestamp] ..." wrapper above — that
+        # wrapper is this app's own recording/replay format, while a
+        # connected TCP client (OpenCPN, a companion app, etc.) expects a
+        # plain NMEA/PSMT sentence as it would come off a real receiver.
+        self.broadcast_server.broadcast_line(line)
 
         self.process_sentence(timestamped)
 
@@ -802,6 +869,15 @@ class MainWindow(QMainWindow):
             if vessel:
                 self.last_ais_mmsi = vessel.mmsi
 
+                if self.replay.current_time is not None:
+                    vessel.uptime_tracker.record_report(
+                        self.replay.current_time,
+                        self.ais_parser.last_msg_type,
+                        self.ais_parser.last_cs,
+                        vessel.sog,
+                        vessel.nav_status,
+                    )
+
                 self.update_target_tree()
 
         elif sentence.startswith("!AIVDO"):
@@ -895,6 +971,14 @@ class MainWindow(QMainWindow):
         self.trim_vessel_tracks()
         self.trim_vessel_rssi_history()
         self.trim_own_track()
+
+        # Ticked here (not only on report arrival) so a vessel that's gone
+        # quiet still progresses green -> amber -> red from elapsed time
+        # alone — update_target_tree() already runs on both the 1s
+        # seen_timer and every incoming AIS message, so this rides that
+        # existing cadence rather than needing its own timer.
+        self.tick_vessel_uptime()
+        self.trim_vessel_uptime()
 
         # Amend existing rows in place rather than clear()+rebuild, so the
         # tree's selection/focus survives a refresh instead of being lost
@@ -1025,6 +1109,9 @@ class MainWindow(QMainWindow):
             f"Logging: {logging_status}"
         )
 
+        if self.settings.get("broadcast_enabled"):
+            message += f" | Broadcast: {self.broadcast_client_count} client(s)"
+
         if self.status_warning:
             message += f" | {self.status_warning}"
 
@@ -1048,9 +1135,30 @@ class MainWindow(QMainWindow):
 
         self.update_status()
 
+    def on_broadcast_client_count_changed(self, count):
+
+        self.broadcast_client_count = count
+
+        self.update_status()
+
+    def apply_broadcast_settings(self):
+
+        self.broadcast_server.stop()
+
+        if self.settings.get("broadcast_enabled"):
+
+            port = int(self.settings.get("broadcast_port", "10110"))
+
+            if not self.broadcast_server.start(port):
+                self.status_bar.showMessage(f"Broadcast: could not listen on port {port}", 5000)
+
+        self.update_status()
+
     def closeEvent(self, event):
 
         self.stop_live_serial()
+
+        self.broadcast_server.stop()
 
         self.save_window_geometry()
 
@@ -1095,6 +1203,7 @@ class MainWindow(QMainWindow):
 
         if dialog.exec():
             SettingsService.save(self.settings)
+            self.apply_broadcast_settings()
 
     def show_preferences(self):
 
@@ -1166,7 +1275,14 @@ class MainWindow(QMainWindow):
         self.show_rssi_graph_action = view_menu.addAction("Show RSSI Graph")
         self.show_rssi_graph_action.setCheckable(True)
         self.show_rssi_graph_action.setChecked(self.settings.get("show_rssi_graph", True))
-        self.show_rssi_graph_action.toggled.connect(self.set_show_rssi_graph)
+        self.show_rssi_graph_action.toggled.connect(self.rssi_toggle.setChecked)
+        self.rssi_toggle.toggled.connect(self.show_rssi_graph_action.setChecked)
+
+        self.show_vessel_uptime_action = view_menu.addAction("Show Vessel Uptime")
+        self.show_vessel_uptime_action.setCheckable(True)
+        self.show_vessel_uptime_action.setChecked(self.settings.get("show_vessel_uptime", True))
+        self.show_vessel_uptime_action.toggled.connect(self.uptime_toggle.setChecked)
+        self.uptime_toggle.toggled.connect(self.show_vessel_uptime_action.setChecked)
 
         columns_menu = view_menu.addMenu("Select Columns")
 
@@ -1358,14 +1474,6 @@ class MainWindow(QMainWindow):
         self.map_view.set_show_place_names(show)
 
         self.settings["show_place_names"] = show
-
-        SettingsService.save(self.settings)
-
-    def set_show_rssi_graph(self, show):
-
-        self.rssi_graph_container.setVisible(show)
-
-        self.settings["show_rssi_graph"] = show
 
         SettingsService.save(self.settings)
 
@@ -1831,6 +1939,15 @@ class MainWindow(QMainWindow):
 
         self.rssi_graph.set_history(vessel.rssi_history, self.replay.current_time, vessel.pinned)
 
+        if self.replay.current_time is not None:
+            self.uptime_bar.set_segments(
+                vessel.uptime_tracker.segments(self.replay.current_time),
+                self.replay.current_time,
+                self.track_window_start(self.replay.current_time),
+            )
+        else:
+            self.uptime_bar.clear()
+
     def reset_session(self):
 
         # Pinned vessels survive a clear, but with their data wiped back to
@@ -1893,6 +2010,7 @@ class MainWindow(QMainWindow):
         self.detail_beam.setText("-")
 
         self.rssi_graph.clear()
+        self.uptime_bar.clear()
 
     def reset_vessel_data(self, vessel):
 
@@ -1981,6 +2099,42 @@ class MainWindow(QMainWindow):
 
         for vessel in self.registry.vessels.values():
             self.trim_track(vessel.rssi_history, track_seconds)
+
+    def tick_vessel_uptime(self):
+
+        if self.replay.current_time is None:
+            return
+
+        for vessel in self.registry.vessels.values():
+            vessel.uptime_tracker.tick(self.replay.current_time)
+
+    def track_window_start(self, now):
+        """None for "Unlimited" track length, else `now` minus the
+        configured window — shared by trim_vessel_uptime's cutoff and the
+        uptime bar's display window (VesselUptimeBar.set_segments) so the
+        two always agree on what "the window" means."""
+
+        track_length_setting = self.settings.get("track_length", "10")
+
+        if track_length_setting == "Unlimited":
+            return None
+
+        track_seconds = int(track_length_setting) * 60
+
+        return now - timedelta(seconds=track_seconds)
+
+    def trim_vessel_uptime(self):
+
+        if self.replay.current_time is None:
+            return
+
+        cutoff = self.track_window_start(self.replay.current_time)
+
+        if cutoff is None:
+            return
+
+        for vessel in self.registry.vessels.values():
+            vessel.uptime_tracker.trim(cutoff)
 
     def trim_own_track(self):
 
