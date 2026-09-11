@@ -195,11 +195,13 @@ class RssiGraphWidget(QWidget):
         painter.drawText(plot_left, plot_top + 8, f"{scale_max}")
         painter.drawText(plot_left, line_bottom + self.BOTTOM_TEXT_PADDING - 2, f"{scale_min}")
 
-        # min/current/max stats on the opposite (right) side.
+        # Current value on the opposite (right) side — min/max/avg live in
+        # the section header now (see MainWindow.format_rssi_stats), so
+        # aren't repeated here.
         metrics = painter.fontMetrics()
 
         current_value = self.history[-1][1]
-        caption = f"min {min_value}  ·  current {current_value}  ·  max {max_value}"
+        caption = f"current {current_value}"
 
         painter.drawText(plot_right - metrics.horizontalAdvance(caption), plot_top + 8, caption)
 

@@ -202,6 +202,19 @@ signal strength) only populates for compatible receiver hardware that
 reports it.
 </p>
 <p>
+Selecting a vessel also shows two collapsible graphs below its details.
+<b>RSSI History</b> plots signal strength over time (again, only for
+compatible receiver hardware). <b>Vessel Uptime</b> shows an
+Uptime-Kuma-style green/amber/red status strip, comparing how often the
+vessel actually transmits against the ITU-R M.1371 reporting interval
+expected for its class and speed — <b>amber</b> means a report is running
+late but still within tolerance, <b>red</b> means one was likely actually
+missed. Both graphs collapse like Raw Data (click the <b>►</b>/<b>▼</b>
+title), remember that state between sessions, and keep showing a summary —
+signal min/avg/max, or uptime % — in the title bar even while collapsed.
+Both span the same time window as <b>Preferences &gt; Track Length</b>.
+</p>
+<p>
 <b>File &gt; Export</b> saves a screenshot of the whole window, or the
 current target list, to a file.
 </p>
@@ -245,6 +258,20 @@ GNSS, RSSI, or anything else) — this only affects what's shown, not what's
 processed.
 </p>
 
+<h3>File Analysis</h3>
+<p>
+<b>File &gt; Analyze File...</b> runs a full pass over a log file without
+replaying it, and shows per-vessel statistics: transmission counts, RSSI
+min/avg/max, average speed, distance traveled, closest/furthest range, and
+how long each vessel was tracked. Runs on a background thread with a
+cancellable progress dialog, since a large multi-day capture can take a
+while. <b>Expected</b>, <b>Position TX</b>, and <b>Loss %</b> compare each
+vessel's actual position-report count against what the ITU-R M.1371
+reporting-interval rules predict it should have sent — an estimate, not an
+exact count (it assumes a gap's speed held constant throughout), so
+<b>Loss %</b> can legitimately go negative. Results can be exported to CSV.
+</p>
+
 <h3>Session Error Log</h3>
 <p>
 A sentence that can't be decoded is skipped rather than crashing the app,
@@ -269,6 +296,15 @@ serial port and baud rate. Use each port's <b>Test</b> button to listen on
 it briefly and confirm data is actually arriving, before starting a full
 session. If your receiver doesn't communicate correctly, check the
 collapsed <b>Advanced</b> section:
+</p>
+<p>
+<b>AIS Source</b> switches between <b>Serial</b> (a COM port, as above) and
+<b>Network</b> (a TCP connection) — for receivers that provide AIS data
+over WiFi or Ethernet instead of a serial port. <b>Network Broadcast</b>
+re-broadcasts the combined AIS stream over TCP (default port 10110, the de
+facto standard NMEA-over-TCP port) so other software on the network — e.g.
+OpenCPN — can consume it live; the status bar shows the number of
+connected broadcast clients while it's enabled.
 </p>
 <p>
 The <b>Serial Format</b> describes how each byte of data is framed on the
