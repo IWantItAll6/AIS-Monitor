@@ -2,7 +2,7 @@ import time
 
 from PySide6.QtNetwork import QTcpServer, QHostAddress
 
-from services.network_reader import NetworkAisReader, NetworkTestThread
+from services.network_reader import NetworkAisReader, NetworkTestThread, strip_telnet_negotiation
 
 
 def pump_until(qapp, condition, timeout=2.0):
@@ -68,6 +68,112 @@ def test_reader_splits_a_sentence_arriving_across_two_reads(qapp):
 
     assert pump_until(qapp, lambda: len(received) >= 1)
     assert received == ["$GPRMC,partial*00"]
+
+    reader.stop()
+    server.close()
+
+
+def test_strip_telnet_negotiation_removes_will_wont_do_dont():
+
+    # IAC WILL ECHO, IAC WONT SUPPRESS-GO-AHEAD, IAC DO TERMINAL-TYPE,
+    # IAC DONT LINEMODE - each a 3-byte IAC+command+option sequence.
+    data = bytes([255, 251, 1, 255, 252, 3, 255, 253, 24, 255, 254, 34]) + b"$GPRMC,test*00"
+
+    cleaned, remainder = strip_telnet_negotiation(data)
+
+    assert cleaned == b"$GPRMC,test*00"
+    assert remainder == b""
+
+
+def test_strip_telnet_negotiation_removes_subnegotiation_block():
+
+    # IAC SB ... IAC SE - a variable-length payload, here NAWS (window size).
+    data = bytes([255, 250, 31, 0, 80, 0, 24, 255, 240]) + b"$GPRMC,test*00"
+
+    cleaned, remainder = strip_telnet_negotiation(data)
+
+    assert cleaned == b"$GPRMC,test*00"
+    assert remainder == b""
+
+
+def test_strip_telnet_negotiation_unescapes_literal_0xff_byte():
+
+    # IAC IAC is how telnet escapes an actual 0xFF data byte, as opposed to
+    # a real negotiation sequence - the single 0xFF must survive, not be
+    # dropped or misread as the start of another command.
+    data = bytes([255, 255]) + b"data"
+
+    cleaned, remainder = strip_telnet_negotiation(data)
+
+    assert cleaned == bytes([255]) + b"data"
+    assert remainder == b""
+
+
+def test_strip_telnet_negotiation_holds_back_an_incomplete_sequence():
+
+    # A WILL/WONT/DO/DONT command whose option byte hasn't arrived yet -
+    # must not be guessed at or dropped, just held for the next call.
+    data = b"$GPRMC,test*00\r\n" + bytes([255, 251])
+
+    cleaned, remainder = strip_telnet_negotiation(data)
+
+    assert cleaned == b"$GPRMC,test*00\r\n"
+    assert remainder == bytes([255, 251])
+
+
+def test_strip_telnet_negotiation_holds_back_an_incomplete_subnegotiation():
+
+    data = b"$GPRMC,test*00\r\n" + bytes([255, 250, 31, 0, 80])  # no IAC SE yet
+
+    cleaned, remainder = strip_telnet_negotiation(data)
+
+    assert cleaned == b"$GPRMC,test*00\r\n"
+    assert remainder == bytes([255, 250, 31, 0, 80])
+
+
+def test_strip_telnet_negotiation_passes_plain_data_through_unchanged():
+
+    data = b"$GPRMC,test*00\r\n$GPGGA,test*00\r\n"
+
+    cleaned, remainder = strip_telnet_negotiation(data)
+
+    assert cleaned == data
+    assert remainder == b""
+
+
+def test_reader_strips_telnet_negotiation_bytes_from_a_real_stream(qapp):
+    """The scenario this whole feature exists for: a device that genuinely
+    speaks telnet protocol (as opposed to the common case of just being
+    reachable via a telnet *client* on a raw byte stream) sends IAC
+    negotiation unsolicited, and this app never replies to it. Without
+    stripping, the surviving low-ASCII option bytes would corrupt whichever
+    sentence they land next to."""
+
+    server = start_loopback_server()
+
+    reader = NetworkAisReader("127.0.0.1", server.serverPort())
+
+    received = []
+    reader.line_received.connect(received.append)
+
+    reader.start()
+
+    assert pump_until(qapp, server.hasPendingConnections)
+    connection = server.nextPendingConnection()
+
+    negotiation = bytes([255, 251, 1, 255, 251, 3, 255, 253, 24])  # WILL ECHO, WILL SGA, DO TTYPE
+
+    connection.write(negotiation + b"$GPRMC,test1*00\r\n")
+    connection.write(b"$GPRMC," + negotiation + b"test2*00\r\n")
+
+    # The negotiation sequence itself split across two separate reads.
+    connection.write(bytes([255, 251]))
+    qapp.processEvents()
+    time.sleep(0.05)
+    connection.write(bytes([1]) + b"$GPRMC,test3*00\r\n")
+
+    assert pump_until(qapp, lambda: len(received) >= 3)
+    assert received == ["$GPRMC,test1*00", "$GPRMC,test2*00", "$GPRMC,test3*00"]
 
     reader.stop()
     server.close()

@@ -6,6 +6,71 @@ from PySide6.QtNetwork import QTcpSocket
 
 from services.serial_reader import analyze_reception
 
+# Telnet (RFC 854) control bytes. Most "NMEA over TCP" receivers just
+# stream a raw byte feed on whatever port — testing one with a telnet
+# client (as opposed to a real telnet *server*) works fine precisely
+# because there's no actual telnet protocol involved, only a convenient
+# generic TCP terminal. But a device that genuinely runs telnet protocol
+# would send IAC option-negotiation sequences unsolicited, and this app
+# never replies to them (it isn't a telnet client) — left alone, those
+# sequences would otherwise corrupt whichever NMEA sentence they land
+# next to: the IAC byte itself (0xFF) is non-ASCII and gets silently
+# dropped by the ascii/errors="ignore" decode below, but the option code
+# that follows it (e.g. ECHO=1, SUPPRESS-GO-AHEAD=3) is valid low-ASCII
+# and would survive, embedded as a stray control character.
+IAC = 0xFF
+SE = 240
+SB = 250
+
+
+def strip_telnet_negotiation(data):
+    """Removes complete IAC negotiation/subnegotiation sequences from a raw
+    byte buffer. Returns (cleaned, remainder) — remainder holds the tail
+    starting at an IAC sequence that hasn't fully arrived yet (or b"" if
+    none), left for the next call to retry once more data comes in, the
+    same "wait for the rest" idea as the line-buffering this feeds into."""
+
+    result = bytearray()
+    i = 0
+    n = len(data)
+
+    while i < n:
+
+        if data[i] != IAC:
+            result.append(data[i])
+            i += 1
+            continue
+
+        if i + 1 >= n:
+            break  # bare trailing IAC - the command byte hasn't arrived yet
+
+        command = data[i + 1]
+
+        if command == IAC:
+            result.append(IAC)  # IAC IAC escapes a literal 0xFF data byte
+            i += 2
+
+        elif command == SB:
+
+            end = data.find(bytes([IAC, SE]), i + 2)
+
+            if end == -1:
+                break  # subnegotiation payload not fully arrived yet
+
+            i = end + 2
+
+        elif 251 <= command <= 254:  # WILL/WONT/DO/DONT, each + one option byte
+
+            if i + 2 >= n:
+                break
+
+            i += 3
+
+        else:
+            i += 2  # other two-byte commands (NOP, AYT, GA, ...)
+
+    return bytes(result), data[i:]
+
 
 class NetworkAisReader(QObject):
     """Reads NMEA/AIS lines from a TCP connection — the network-source
@@ -34,6 +99,13 @@ class NetworkAisReader(QObject):
         self._socket_factory = socket_factory or QTcpSocket
 
         self.socket = None
+
+        # Raw bytes from the socket not yet telnet-stripped (see
+        # strip_telnet_negotiation) — separate from _buffer, which holds
+        # already-stripped bytes waiting to be split into lines, so an IAC
+        # sequence that hasn't fully arrived yet stays raw rather than
+        # getting prematurely treated as line data.
+        self._raw_buffer = b""
         self._buffer = b""
 
     def start(self):
@@ -46,7 +118,10 @@ class NetworkAisReader(QObject):
 
     def _on_ready_read(self):
 
-        self._buffer += bytes(self.socket.readAll().data())
+        self._raw_buffer += bytes(self.socket.readAll().data())
+
+        cleaned, self._raw_buffer = strip_telnet_negotiation(self._raw_buffer)
+        self._buffer += cleaned
 
         # A TCP stream has no message framing of its own — split on
         # newlines the same way SerialReaderThread's line-oriented
