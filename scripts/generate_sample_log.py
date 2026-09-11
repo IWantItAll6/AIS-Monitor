@@ -23,7 +23,7 @@ CENTER_LAT = 50.00
 CENTER_LON = -5.00
 
 START_TIME = datetime(2026, 1, 1, 8, 0, 0)
-DURATION_SECONDS = 180
+DURATION_SECONDS = 240
 
 # Simplified ITU-R M.1371 Table 3: how often a Class A unit repeats its own
 # position report, by speed over ground. Doesn't model the anchored/moored
@@ -80,6 +80,22 @@ VESSELS = [
 # their own AIS message types (or, for beacons, reserved MMSI prefixes) —
 # kept separate from the moving VESSELS above since they're built and
 # broadcast differently below.
+# Deliberate reception gaps for a subset of vessels — (seconds into the
+# scenario the gap starts, gap length in seconds) — so the bundled sample
+# log actually demonstrates the Vessel Uptime bar's amber/red states
+# instead of solid green throughout. All these vessels report every 10s
+# nominally (see class_a_report_interval), with a 20s grace window before
+# a gap reads as genuinely missed (see services/vessel_uptime.GRACE_MULTIPLIER):
+# SAMPLE VESSEL FOUR's gap is short enough to stay within that grace and
+# resolve straight back to green; the other two are long enough to go red.
+# SAMPLE VESSEL ONE is left alone entirely, as the "always reliable"
+# baseline for contrast.
+VESSEL_OUTAGES = {
+    999000004: [(40, 5)],   # skips exactly one 10s-cadence report -> a clean 20s gap, amber only
+    999000002: [(90, 50)],
+    999000003: [(160, 40)],
+}
+
 BASE_STATION = {"mmsi": 2320000, "lat": CENTER_LAT + 0.08, "lon": CENTER_LON + 0.05}
 
 ATONS = [
@@ -97,6 +113,13 @@ ATONS = [
 # their reserved MMSI prefix (970/972/974 — see parsers/ais_parser.py's
 # MMSI_PREFIX_STATION_TYPES) identifies the station type.
 BEACON = {"mmsi": 970000001, "name": "SAMPLE SART", "lat": CENTER_LAT + 0.01, "lon": CENTER_LON - 0.15}
+
+
+def in_outage(mmsi, elapsed_seconds):
+
+    return any(
+        start <= elapsed_seconds < start + duration for start, duration in VESSEL_OUTAGES.get(mmsi, [])
+    )
 
 
 def move(lat, lon, course_deg, speed_kn, seconds):
@@ -300,22 +323,29 @@ def generate():
             )
             vessel_last_moved[vessel["mmsi"]] = time
 
-            for sentence in encode_dict({
-                "type": 1, "mmsi": vessel["mmsi"], "lat": vessel["lat"], "lon": vessel["lon"],
-                "speed": vessel["speed"], "course": vessel["course"],
-                "heading": int(vessel["course"]), "status": 0, "turn": 0
-            }, sentence_type="VDM"):
-                emit(sentence, time)
-
-            # A slow sine drift per vessel (out of phase with each other via
-            # the mmsi-derived offset) rather than a constant value, so the
-            # RSSI history graph actually has something to show when
-            # replaying this log instead of a flat line.
             elapsed_since_start = (time - sim_start).total_seconds()
-            phase = (vessel["mmsi"] % 7) * 0.9
-            drift = round(6 * sin(elapsed_since_start / 20 + phase))
 
-            emit(psmt("A", -90 - (vessel["mmsi"] % 20) + drift), time)
+            # A skipped transmission is invisible from the receiving end,
+            # not a real gap in the vessel's own schedule — so this vessel
+            # still moves and gets rescheduled normally below, it's just
+            # this cycle's report/RSSI reading that goes unheard.
+            if not in_outage(vessel["mmsi"], elapsed_since_start):
+
+                for sentence in encode_dict({
+                    "type": 1, "mmsi": vessel["mmsi"], "lat": vessel["lat"], "lon": vessel["lon"],
+                    "speed": vessel["speed"], "course": vessel["course"],
+                    "heading": int(vessel["course"]), "status": 0, "turn": 0
+                }, sentence_type="VDM"):
+                    emit(sentence, time)
+
+                # A slow sine drift per vessel (out of phase with each other
+                # via the mmsi-derived offset) rather than a constant value,
+                # so the RSSI history graph actually has something to show
+                # when replaying this log instead of a flat line.
+                phase = (vessel["mmsi"] % 7) * 0.9
+                drift = round(6 * sin(elapsed_since_start / 20 + phase))
+
+                emit(psmt("A", -90 - (vessel["mmsi"] % 20) + drift), time)
 
             interval = class_a_report_interval(vessel["speed"])
             heapq.heappush(heap, (time + timedelta(seconds=interval), next(seq), "vessel_ais", vessel))

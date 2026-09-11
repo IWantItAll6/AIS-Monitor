@@ -1,6 +1,6 @@
 # AIS Monitor
 
-A desktop AIS and GNSS monitoring tool for tracking vessels from a live serial receiver or an offline log replay, plotted on a lightweight offline coastline map.
+A desktop AIS and GNSS monitoring tool for tracking vessels from a live serial or network receiver, or an offline log replay, plotted on a lightweight offline coastline map.
 
 ![Screenshot](docs/screenshot.png)
 
@@ -10,13 +10,15 @@ Replay mode, mapping, and the target list are solid and covered by an automated 
 
 ## Features
 
-- **Live mode**: reads AIS and GNSS sentences from serial receivers (configurable port, baud, and data/parity/stop bits per receiver), with an optional separate GNSS port.
+- **Live mode**: reads AIS and GNSS sentences from a serial receiver (configurable port, baud, and data/parity/stop bits) or a network (TCP) AIS source, with an optional separate GNSS port. Can also re-broadcast the combined stream over TCP for other software (e.g. OpenCPN) to consume.
 - **Replay mode**: play back a recorded log at adjustable speed, or scrub to any point in the file with an animated "catch-up" preview of the preceding track history.
 - **Session recording**: live sessions are automatically logged to disk in the same format replay reads, so a recorded session is itself replayable.
 - **Offline coastline map**: pan/zoom map rendered from Natural Earth data (no internet connection or tile server required), with vessel markers, heading-oriented triangles, track history, and a nautical scale bar.
 - **Target list**: sortable table of tracked vessels with range/bearing to your own position, pinning (survives Clear and sorts to the top), and per-column visibility.
 - **Vessel detail panel**: MMSI, name, callsign, type, position, SOG/COG/heading, nav status, and more — every field is independently toggleable from the View menu.
-- **RSSI tracking**: signal-strength correlation for compatible receiver hardware.
+- **RSSI tracking**: signal-strength history graph, with min/avg/max, for compatible receiver hardware.
+- **Vessel uptime**: an Uptime-Kuma-style green/amber/red status strip per vessel, comparing actual transmission timing against the ITU-R M.1371 expected reporting interval for its class and speed.
+- **File analysis**: run statistics — transmission counts, an estimated TX-loss %, RSSI, speed, range, distance traveled — over an entire log file without replaying it, exportable to CSV.
 - **Distance units, themes**: nautical miles/km/miles, dark/light theme.
 
 ## Requirements
