@@ -119,6 +119,19 @@ class RssiGraphWidget(QWidget):
 
         return scale_min, scale_max
 
+    @staticmethod
+    def compute_stats(history):
+        """(min, max, avg) RSSI over history, or None for an empty one —
+        for the header's summary label, split out for the same reason as
+        compute_scale (unit-testable without a real paint device)."""
+
+        if not history:
+            return None
+
+        values = [rssi for _, rssi in history]
+
+        return min(values), max(values), sum(values) / len(values)
+
     def draw_graph(self, painter):
 
         values = [rssi for _, rssi in self.history]

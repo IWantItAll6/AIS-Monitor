@@ -164,9 +164,12 @@ class MainWindow(QMainWindow):
         "►/▼ Title" button — the same collapse pattern already used for
         Raw Data — while (unlike Raw Data) remembering its shown/hidden
         state across restarts via settings[setting_key]. Returns
-        (container, toggle_button); the toggle is also handed back so
-        callers can bidirectionally sync it with a View-menu action, the
-        same way raw_toggle syncs with show_raw_data_action."""
+        (container, toggle_button, stats_label); the toggle is also handed
+        back so callers can bidirectionally sync it with a View-menu
+        action, the same way raw_toggle syncs with show_raw_data_action.
+        stats_label sits right-aligned in the same header row (e.g. an
+        uptime % or RSSI min/max/avg) so it's visible without spending
+        extra vertical space, and stays visible even while collapsed."""
 
         container = QWidget()
 
@@ -179,7 +182,17 @@ class MainWindow(QMainWindow):
         toggle = QPushButton(("▼ " if visible else "► ") + title)
         toggle.setCheckable(True)
         toggle.setChecked(visible)
-        layout.addWidget(toggle)
+
+        stats_label = QLabel("")
+        stats_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.addWidget(toggle)
+        header_layout.addStretch()
+        header_layout.addWidget(stats_label)
+
+        layout.addLayout(header_layout)
 
         widget.setVisible(visible)
         layout.addWidget(widget)
@@ -195,7 +208,7 @@ class MainWindow(QMainWindow):
 
         toggle.toggled.connect(on_toggled)
 
-        return container, toggle
+        return container, toggle, stats_label
 
     def setup_ui(self):
         central = QWidget()
@@ -359,14 +372,14 @@ class MainWindow(QMainWindow):
         self.rssi_graph.set_vessel_color(self.settings["vessel_color"])
         self.rssi_graph.set_pinned_color(self.settings["pinned_color"])
 
-        rssi_container, self.rssi_toggle = self.create_collapsible_section(
+        rssi_container, self.rssi_toggle, self.rssi_stats_label = self.create_collapsible_section(
             "RSSI History", self.rssi_graph, "show_rssi_graph"
         )
         target_layout.addWidget(rssi_container)
 
         self.uptime_bar = VesselUptimeBar()
 
-        uptime_container, self.uptime_toggle = self.create_collapsible_section(
+        uptime_container, self.uptime_toggle, self.uptime_stats_label = self.create_collapsible_section(
             "Vessel Uptime", self.uptime_bar, "show_vessel_uptime"
         )
         target_layout.addWidget(uptime_container)
@@ -1939,14 +1952,39 @@ class MainWindow(QMainWindow):
 
         self.rssi_graph.set_history(vessel.rssi_history, self.replay.current_time, vessel.pinned)
 
+        rssi_stats = RssiGraphWidget.compute_stats(vessel.rssi_history)
+        self.rssi_stats_label.setText(self.format_rssi_stats(rssi_stats))
+
         if self.replay.current_time is not None:
+
+            window_start = self.track_window_start(self.replay.current_time)
+
             self.uptime_bar.set_segments(
-                vessel.uptime_tracker.segments(self.replay.current_time),
-                self.replay.current_time,
-                self.track_window_start(self.replay.current_time),
+                vessel.uptime_tracker.segments(self.replay.current_time), self.replay.current_time, window_start
             )
+
+            uptime_pct = vessel.uptime_tracker.uptime_percentage(self.replay.current_time, window_start)
+            self.uptime_stats_label.setText(self.format_uptime_stats(uptime_pct))
+
         else:
             self.uptime_bar.clear()
+            self.uptime_stats_label.setText("")
+
+    def format_rssi_stats(self, stats):
+
+        if stats is None:
+            return ""
+
+        rssi_min, rssi_max, rssi_avg = stats
+
+        return f"min {rssi_min} · avg {rssi_avg:.0f} · max {rssi_max} dBm"
+
+    def format_uptime_stats(self, uptime_pct):
+
+        if uptime_pct is None:
+            return ""
+
+        return f"{uptime_pct:.0f}% up"
 
     def reset_session(self):
 
@@ -2010,7 +2048,10 @@ class MainWindow(QMainWindow):
         self.detail_beam.setText("-")
 
         self.rssi_graph.clear()
+        self.rssi_stats_label.setText("")
+
         self.uptime_bar.clear()
+        self.uptime_stats_label.setText("")
 
     def reset_vessel_data(self, vessel):
 

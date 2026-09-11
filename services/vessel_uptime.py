@@ -124,6 +124,47 @@ class VesselUptimeTracker:
 
         return result
 
+    def uptime_percentage(self, now, window_start=None):
+        """% of the window spent GREEN — AMBER and RED both count against
+        it, matching the intuitive "was it reporting on schedule" reading
+        rather than a stricter "confirmed missed only" one. window_start
+        clips the window the same way VesselUptimeBar's display window
+        does (pass the same value so the header % and the bar it sits
+        above always agree); defaults to the tracker's own earliest
+        change point — i.e. its whole recorded history — when omitted.
+
+        None if there's no data to measure yet.
+        """
+
+        segments = self.segments(now)
+
+        if not segments:
+            return None
+
+        start = segments[0][0]
+
+        if window_start is not None:
+            start = max(start, window_start)
+
+        total_seconds = (now - start).total_seconds()
+
+        if total_seconds <= 0:
+            return None
+
+        green_seconds = 0.0
+
+        for seg_start, seg_end, state in segments:
+
+            seg_start = max(seg_start, start)
+
+            if seg_end <= seg_start:
+                continue
+
+            if state == UptimeState.GREEN:
+                green_seconds += (seg_end - seg_start).total_seconds()
+
+        return (green_seconds / total_seconds) * 100.0
+
     def trim(self, cutoff_time):
         """Drops change points entirely before cutoff_time, except the
         last one at-or-before it — that one still describes the state in

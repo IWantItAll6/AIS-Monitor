@@ -36,3 +36,19 @@ def test_compute_scale_never_returns_a_zero_span():
     scale_min, scale_max = RssiGraphWidget.compute_scale(-80, -80)
 
     assert scale_max > scale_min
+
+
+def test_compute_stats_is_none_for_empty_history():
+
+    assert RssiGraphWidget.compute_stats([]) is None
+
+
+def test_compute_stats_returns_min_max_avg():
+
+    history = [(0, -90), (1, -80), (2, -100)]
+
+    rssi_min, rssi_max, rssi_avg = RssiGraphWidget.compute_stats(history)
+
+    assert rssi_min == -100
+    assert rssi_max == -80
+    assert rssi_avg == -90.0

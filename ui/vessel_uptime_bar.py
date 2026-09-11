@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from PySide6.QtWidgets import QWidget, QSizePolicy
 from PySide6.QtGui import QPainter, QColor, QPalette
 from PySide6.QtCore import Qt, QRectF
@@ -9,6 +11,19 @@ STATE_COLORS = {
     UptimeState.GREEN: QColor("#2ECC71"),
     UptimeState.AMBER: QColor("#F1C40F"),
     UptimeState.RED: QColor("#E74C3C"),
+}
+
+# Worst-state-wins ranking for bucketing multiple ticks/reports into one
+# bar (see draw_bar) — a bucket showing RED means at least one moment
+# inside it was RED, same as Uptime Kuma collapsing multiple checks into
+# one bar. This also fixes a real visibility problem the continuous-fill
+# version had: a report arriving mere milliseconds past the grace window
+# produced a genuinely-recorded but sub-pixel-wide RED sliver that was
+# effectively invisible — bucketing forces that whole bucket red instead.
+SEVERITY = {
+    UptimeState.GREEN: 0,
+    UptimeState.AMBER: 1,
+    UptimeState.RED: 2,
 }
 
 
@@ -27,6 +42,15 @@ class VesselUptimeBar(QWidget):
     MARGIN = 6
     BAR_HEIGHT = 16
     LABEL_BASELINE_OFFSET = 11
+
+    # Bucket count is derived from the widget's actual pixel width to hit
+    # this target slot size, rather than a fixed count — so a narrow panel
+    # doesn't cram in sub-pixel bars and a wide one doesn't end up with
+    # only a handful of chunky ones; both instead get consistently-sized
+    # bubbles, just more or fewer of them.
+    TARGET_SLOT_WIDTH = 8
+    BUCKET_GAP = 2
+    CORNER_RADIUS = 1.5
 
     def __init__(self, parent=None):
 
@@ -97,21 +121,30 @@ class VesselUptimeBar(QWidget):
         bar_top = self.MARGIN
         bar_bottom = bar_top + self.BAR_HEIGHT
 
-        def x_at(time):
-            return plot_left + ((time - start_time).total_seconds() / duration) * plot_width
+        bucket_count = max(1, round(plot_width / self.TARGET_SLOT_WIDTH))
+        slot_width = plot_width / bucket_count
+        bucket_seconds = duration / bucket_count
 
-        for seg_start, seg_end, state in self.segments:
+        painter.setPen(Qt.PenStyle.NoPen)
 
-            x0 = x_at(seg_start)
-            x1 = x_at(seg_end)
+        for i in range(bucket_count):
 
-            # A same-instant (zero-width) segment can occur right at a
-            # report's arrival (see VesselUptimeTracker.record_report) —
-            # skip it rather than draw an invisible sliver.
-            if x1 <= x0:
+            bucket_start = start_time + timedelta(seconds=i * bucket_seconds)
+            bucket_end = start_time + timedelta(seconds=(i + 1) * bucket_seconds)
+
+            state = self.worst_state_in(bucket_start, bucket_end)
+
+            if state is None:
                 continue
 
-            painter.fillRect(QRectF(x0, bar_top, x1 - x0, bar_bottom - bar_top), STATE_COLORS[state])
+            x0 = plot_left + i * slot_width
+
+            rect = QRectF(
+                x0 + self.BUCKET_GAP / 2, bar_top, max(slot_width - self.BUCKET_GAP, 1), bar_bottom - bar_top
+            )
+
+            painter.setBrush(STATE_COLORS[state])
+            painter.drawRoundedRect(rect, self.CORNER_RADIUS, self.CORNER_RADIUS)
 
         caption_color = self.palette().color(QPalette.ColorRole.Text)
         caption_color.setAlpha(180)
@@ -129,3 +162,21 @@ class VesselUptimeBar(QWidget):
 
         painter.drawText(plot_left, label_y, age_label)
         painter.drawText(plot_right - metrics.horizontalAdvance(now_label), label_y, now_label)
+
+    def worst_state_in(self, bucket_start, bucket_end):
+        """The most severe state (RED > AMBER > GREEN, see SEVERITY) that
+        overlaps [bucket_start, bucket_end) — None if nothing does, which
+        only happens for a bucket entirely before this vessel's earliest
+        recorded data (segments are otherwise contiguous with no gaps)."""
+
+        worst = None
+
+        for seg_start, seg_end, state in self.segments:
+
+            if seg_end <= bucket_start or seg_start >= bucket_end:
+                continue
+
+            if worst is None or SEVERITY[state] > SEVERITY[worst]:
+                worst = state
+
+        return worst

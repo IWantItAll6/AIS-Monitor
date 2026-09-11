@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+import pytest
+
 from services.vessel_uptime import VesselUptimeTracker, UptimeState
 
 START = datetime(2026, 1, 1, 0, 0, 0)
@@ -197,3 +199,43 @@ def test_trim_keeps_one_change_point_before_cutoff_for_continuity():
     tracker.trim(at(25))
 
     assert tracker.change_points == [(at(21), UptimeState.RED), (at(30), UptimeState.GREEN)]
+
+
+def test_uptime_percentage_is_none_with_no_data():
+
+    tracker = VesselUptimeTracker()
+
+    assert tracker.uptime_percentage(at(0)) is None
+
+
+def test_uptime_percentage_is_100_for_solid_green():
+
+    tracker = VesselUptimeTracker()
+    tracker.record_report(at(0), msg_type=1, cs_flag=None, speed_kn=10.0)
+    tracker.tick(at(10))
+
+    assert tracker.uptime_percentage(at(10)) == 100.0
+
+
+def test_uptime_percentage_counts_amber_and_red_against_it():
+
+    # 10s nominal, 20s grace: green 0-11, amber 11-21, red 21-41.
+    tracker = VesselUptimeTracker()
+    tracker.record_report(at(0), msg_type=1, cs_flag=None, speed_kn=10.0)
+    tracker.tick(at(11))  # amber
+    tracker.tick(at(21))  # red
+
+    assert tracker.uptime_percentage(at(41)) == pytest.approx(11 / 41 * 100)
+
+
+def test_uptime_percentage_respects_window_start():
+
+    # Same shape as above, but the window starts at t=15 — inside the
+    # amber segment, entirely past the green portion, so none of the
+    # green before it should count.
+    tracker = VesselUptimeTracker()
+    tracker.record_report(at(0), msg_type=1, cs_flag=None, speed_kn=10.0)
+    tracker.tick(at(11))  # amber
+    tracker.tick(at(21))  # red
+
+    assert tracker.uptime_percentage(at(41), window_start=at(15)) == 0.0
