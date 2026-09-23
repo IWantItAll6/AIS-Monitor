@@ -33,4 +33,12 @@ class VesselTreeItem(QTreeWidgetItem):
 
             return my_data < other_data
 
-        return super().__lt__(other)
+        # Not super().__lt__(other) — calling the C++ base implementation
+        # this way re-enters this same Python override instead of reaching
+        # QTreeWidgetItem's default (a PySide/Shiboken virtual-dispatch
+        # quirk), recursing until Python's recursion limit blows. This hit
+        # in the field on every column with no UserRole sort data set
+        # (Name; Seen in Live mode, which has no replay clock to derive an
+        # age from) — a plain text comparison gives the same "alphabetical"
+        # fallback behavior without re-entering the override.
+        return self.text(column) < other.text(column)

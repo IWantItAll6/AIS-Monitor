@@ -1117,6 +1117,31 @@ class MainWindow(QMainWindow):
 
     def update_target_tree(self):
 
+        # Sorting stays disabled for the whole bulk update below and a
+        # single explicit resort is forced at the end — leaving it enabled
+        # through the loop means every single setText()/setData() call
+        # live-resorts the tree, and under busy traffic that resort can
+        # re-enter itself until Qt/Python's recursion limit blows
+        # (RecursionError in VesselTreeItem.__lt__). Re-enabling sorting
+        # alone does *not* itself trigger a fresh resort against the data
+        # this loop just changed (confirmed: a newly-pinned row's data
+        # updated correctly but stayed at its old, pre-change position) —
+        # sortItems() has to be called explicitly.
+        self.target_tree.setSortingEnabled(False)
+
+        try:
+            self._update_target_tree()
+
+        finally:
+            self.target_tree.setSortingEnabled(True)
+
+            sort_column = self.target_tree.sortColumn()
+
+            if sort_column != -1:
+                self.target_tree.sortItems(sort_column, self.target_tree.header().sortIndicatorOrder())
+
+    def _update_target_tree(self):
+
         self.check_vessel_timeouts()
         self.trim_vessel_tracks()
         self.trim_vessel_rssi_history()
@@ -1957,11 +1982,36 @@ class MainWindow(QMainWindow):
 
         # Silently fast-forward (no timer pacing, same technique as Skip to
         # End) up to the start of the animated window — or straight to the
-        # target if not animating.
+        # target if not animating. This is a synchronous re-simulation from
+        # the start of the file (ReplayService has no random-access seek),
+        # which on a deep scrub into a large capture can take many seconds —
+        # the wait cursor plus periodic processEvents() below only keep the
+        # window responsive/repainting during that time, they don't make it
+        # faster. The scrubber/Skip to End are disabled for the duration so
+        # processEvents() can't let the user fire a second, overlapping seek
+        # into this same synchronous loop.
         self.begin_bulk_replay()
 
-        while self.replay.index < preroll_start_index:
-            self.process_sentence(self.replay.next_line())
+        self.replay_scrubber.setEnabled(False)
+        self.skip_to_end_action.setEnabled(False)
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        try:
+            processed = 0
+
+            while self.replay.index < preroll_start_index:
+                self.process_sentence(self.replay.next_line())
+
+                processed += 1
+
+                if processed % 500 == 0:
+                    QApplication.processEvents()
+
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.replay_scrubber.setEnabled(True)
+            self.skip_to_end_action.setEnabled(True)
 
         self.end_bulk_replay()
 

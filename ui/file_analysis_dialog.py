@@ -154,7 +154,6 @@ class FileAnalysisDialog(QDialog):
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(self.column_labels())
         self.tree.setRootIsDecorated(False)
-        self.tree.setSortingEnabled(True)
         self.tree.setAlternatingRowColors(True)
 
         header = self.tree.header()
@@ -162,7 +161,20 @@ class FileAnalysisDialog(QDialog):
 
         layout.addWidget(self.tree)
 
+        # Sorting is left off for the bulk populate() below and enabled
+        # once at the end — adding items one at a time while sorting is
+        # already on live-resorts on every addTopLevelItem() call, which
+        # can make VesselTreeItem.__lt__ re-enter itself (same recursion
+        # bug as the live target tree in main_window.py).
+        self.tree.setSortingEnabled(False)
         self.populate()
+        self.tree.setSortingEnabled(True)
+
+        # Re-enabling sorting alone doesn't force a fresh sort against the
+        # rows populate() just added (confirmed empirically) — it has to be
+        # requested explicitly.
+        self.tree.sortItems(self.tree.sortColumn(), self.tree.header().sortIndicatorOrder())
+
         self.fit_columns_to_contents()
 
         button_layout = QHBoxLayout()
