@@ -169,7 +169,11 @@ replay. A large <b>Catching up…</b> badge appears on the map briefly while
 it replays the skipped span in the background, so tracks and vessel state
 arrive at the same point they'd be at if you'd played through normally —
 uncheck <b>Animate on drop</b> next to the scrubber to jump straight there
-instead.
+instead. A scrub only needs to replay back as far as the wider of
+<b>Track Length</b> and <b>Vessel Timeout</b>, not the whole file — but with
+either set to <b>Unlimited</b> there's no such bound, so a large file gets a
+one-time warning when it loads, since every scrub then replays from the
+very start.
 </p>
 <p>
 <b>Pause</b> halts processing without losing the current session. <b>Stop</b>
@@ -212,7 +216,14 @@ late but still within tolerance, <b>red</b> means one was likely actually
 missed. Both graphs collapse like Raw Data (click the <b>►</b>/<b>▼</b>
 title), remember that state between sessions, and keep showing a summary —
 signal min/avg/max, or uptime % — in the title bar even while collapsed.
-Both span the same time window as <b>Preferences &gt; Track Length</b>.
+Both span the same time window as <b>Preferences &gt; Track Length</b>,
+and share a zoom to narrow that window without discarding retained history
+— scroll over either graph, or use the inline <b>−</b>/<b>+</b>/<b>Reset</b>
+controls next to <b>RSSI History</b>'s title. Its <b>Export</b> control
+saves the graph as a PNG image (whatever's currently on screen), or its
+data as CSV — CSV export can grab either just the visible window or, with
+a replay file loaded, the vessel's complete signal history across the
+whole file.
 </p>
 <p>
 <b>File &gt; Export</b> saves a screenshot of the whole window, or the
@@ -270,6 +281,15 @@ vessel's actual position-report count against what the ITU-R M.1371
 reporting-interval rules predict it should have sent — an estimate, not an
 exact count (it assumes a gap's speed held constant throughout), so
 <b>Loss %</b> can legitimately go negative. Results can be exported to CSV.
+</p>
+<p>
+If the same MMSI was reported under more than one name during the file —
+common when field-testing reuses a test MMSI across different rigs — each
+name gets its own row with fully independent statistics, rather than
+being merged together under one MMSI. Select a row for a vessel with
+position data and click <b>Show Track</b> to see its complete journey
+through the file on its own map (not bounded by <b>Track Length</b> the
+way the live map is) with an <b>Export PNG...</b> option.
 </p>
 
 <h3>Session Error Log</h3>
@@ -331,6 +351,10 @@ marker colors, distance units (nautical miles, miles, or km — used
 throughout the target list, detail panel, and map scale bar), how long a
 vessel can go unheard-from before it's removed from the list, how much
 track history is kept per vessel, and the recording settings above.
+<b>Daylight Map Colors</b> (under <b>Map</b>) swaps the map's normal
+dark-navy chart palette for a brighter, higher-contrast one for direct
+sunlight — independent of the app's own light/dark theme, which doesn't
+affect the map.
 </p>
 
 <h3>Keyboard Shortcuts</h3>
