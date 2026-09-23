@@ -61,7 +61,13 @@ jobs:
 
       - name: Package (Windows)
         if: matrix.name == 'windows'
-        run: Compress-Archive -Path dist/AISMonitor -DestinationPath ${{ matrix.archive }}
+        # dist/AISMonitor/* (its contents), not dist/AISMonitor (the folder
+        # itself) - the latter wraps everything in an extra AISMonitor/
+        # folder inside the zip, so the exe isn't visible until you open
+        # that first. This way the exe and its DLLs/data folders sit right
+        # at the zip's top level, matching the flat layout the build itself
+        # already produces (see AISMonitor.spec's contents_directory).
+        run: Compress-Archive -Path dist/AISMonitor/* -DestinationPath ${{ matrix.archive }}
 
       - name: Package (Linux)
         if: matrix.name == 'linux'
