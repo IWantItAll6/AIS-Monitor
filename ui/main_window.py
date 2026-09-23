@@ -74,6 +74,15 @@ class MainWindow(QMainWindow):
     MIN_GRAPH_ZOOM_SECONDS = 30
     DEFAULT_GRAPH_ZOOM_SECONDS = 600  # first zoom-in step when track_length is Unlimited (no window to start from)
 
+    # With Track Length or Vessel Timeout set to "Unlimited", seek_to_index()
+    # has no bounded window to rewind by and must replay the whole file for
+    # every scrub (see scrub_rewind_seconds) — measured on a real ~2hr/127k
+    # -line trial log at ~1,350 lines/sec through the live processing path,
+    # so this many lines implies a scrub could take upwards of ~15s. Past
+    # that, a loaded file gets a one-time heads-up rather than the user
+    # discovering it the slow way on their first scrub.
+    LARGE_FILE_LINE_THRESHOLD = 20000
+
     # How often (in simulated replay time, not wall-clock) to force an
     # uptime tick during a bulk fast-forward — see tick_vessel_uptime_if_due.
     # A compromise: fine enough that even a fast vessel's grace window
@@ -286,6 +295,7 @@ class MainWindow(QMainWindow):
         self.map_view.set_vessel_color(self.settings["vessel_color"])
         self.map_view.set_pinned_color(self.settings["pinned_color"])
         self.map_view.set_show_place_names(self.settings["show_place_names"])
+        self.map_view.set_daylight_mode(self.settings.get("map_daylight_mode", False))
         self.map_view.set_coastal_filter(
             self.settings["coastal_towns_only"], float(self.settings["coastal_threshold_nm"])
         )
@@ -405,6 +415,12 @@ class MainWindow(QMainWindow):
             col = (i % 2) * 2
 
             caption_label = QLabel(caption_text)
+
+            # Selectable/copyable — a plain QLabel's text can't be selected
+            # by default, which meant e.g. Position had to be retyped by
+            # hand instead of copy-pasted (found by the user needing to do
+            # exactly that with a lat/lon).
+            value_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
             details_layout.addWidget(caption_label, row, col)
             details_layout.addWidget(value_label, row, col + 1)
@@ -1406,6 +1422,7 @@ class MainWindow(QMainWindow):
             self.map_view.set_distance_unit(self.settings["distance_unit"])
             self.map_view.set_vessel_color(self.settings["vessel_color"])
             self.map_view.set_pinned_color(self.settings["pinned_color"])
+            self.map_view.set_daylight_mode(self.settings["map_daylight_mode"])
             self.rssi_graph.set_vessel_color(self.settings["vessel_color"])
             self.rssi_graph.set_pinned_color(self.settings["pinned_color"])
             self.map_view.set_coastal_filter(
@@ -1884,6 +1901,8 @@ class MainWindow(QMainWindow):
 
         self.replay.load_file(filename)
 
+        self.warn_if_unbounded_scrub_on_large_file()
+
         self.replay.filename = filename
         self.replay.reset()
         self.current_mode = "Replay"
@@ -1955,6 +1974,87 @@ class MainWindow(QMainWindow):
 
         self.seek_to_index(self.replay_scrubber.value())
 
+    def scrub_rewind_seconds(self):
+        """How far back a scrub needs to replay from to correctly
+        reconstruct app state at the target — the wider of Track Length
+        (how much track/RSSI history should end up visible) and Vessel
+        Timeout (how long a quiet vessel stays in the list at all; if it's
+        the larger of the two, rewinding by Track Length alone could land
+        on a target where a vessel has silently dropped out of the list
+        that continuous playback would have kept). None means unbounded —
+        at least one of the two settings is "Unlimited", so there's no
+        finite window to rewind by; the caller must replay from the start
+        of the file instead."""
+
+        track_setting = self.settings.get("track_length", "10")
+        timeout_setting = self.settings.get("vessel_timeout", "10")
+
+        if track_setting == "Unlimited" or timeout_setting == "Unlimited":
+            return None
+
+        return max(int(track_setting), int(timeout_setting)) * 60
+
+    def estimated_worst_case_scrub_lines(self):
+        """How many lines a single scrub might need to replay in the worst
+        case — an unbounded (Unlimited) setting means the whole file, but
+        even a bounded window can still amount to a lot of lines on a
+        dense-enough capture (e.g. a 60-minute Track Length on a busy
+        file), so this is estimated from the file's own average line
+        density (lines per second, from its first to last timestamp)
+        rather than just checking for "Unlimited" — what actually
+        determines scrub cost is how many lines fall inside the rewind
+        window, not whether that window happens to be finite."""
+
+        total_lines = len(self.replay.lines)
+
+        if total_lines == 0:
+            return 0
+
+        rewind_seconds = self.scrub_rewind_seconds()
+
+        if rewind_seconds is None:
+            return total_lines
+
+        first_time = next(
+            (t for line in self.replay.lines if (t := self.replay.extract_timestamp(line.rstrip())) is not None),
+            None
+        )
+        last_time = next(
+            (
+                t for line in reversed(self.replay.lines)
+                if (t := self.replay.extract_timestamp(line.rstrip())) is not None
+            ),
+            None
+        )
+
+        if first_time is None or last_time is None or last_time <= first_time:
+            return total_lines
+
+        lines_per_second = total_lines / (last_time - first_time).total_seconds()
+
+        return int(lines_per_second * rewind_seconds)
+
+    def warn_if_unbounded_scrub_on_large_file(self):
+
+        estimated_lines = self.estimated_worst_case_scrub_lines()
+
+        if estimated_lines < self.LARGE_FILE_LINE_THRESHOLD:
+            return
+
+        if self.scrub_rewind_seconds() is None:
+            reason = "Track Length and/or Vessel Timeout is set to \"Unlimited\", so there's no bounded window " \
+                     "to rewind by — every scrub has to replay the file from the start."
+        else:
+            reason = (
+                f"Your Track Length/Vessel Timeout settings and this file's message density mean a single "
+                f"scrub could still need to replay roughly {estimated_lines:,} lines."
+            )
+
+        QMessageBox.information(
+            self, "Large File, Slow Scrubbing Likely",
+            f"{reason}\n\nA shorter Track Length/Vessel Timeout in Preferences will make scrubbing faster."
+        )
+
     def seek_to_index(self, target_index):
 
         if not self.replay.filename or not self.replay.lines:
@@ -1965,7 +2065,43 @@ class MainWindow(QMainWindow):
         target_time = self.replay.extract_timestamp(self.replay.lines[target_index])
 
         self.reset_session()
+
+        rewind_seconds = self.scrub_rewind_seconds()
+
+        # Rewind only as far as still guarantees a correct reconstruction
+        # at the target, instead of always replaying from the start of the
+        # file — on a real ~2hr/127k-line trial log, scrubbing near the end
+        # with a 10-minute window measured ~22x faster than the old
+        # always-from-zero approach (93.6s -> 4.3s). Unbounded settings (see
+        # scrub_rewind_seconds) still fall back to replaying everything.
+        rewind_start_index = 0
+
+        if target_time is not None and rewind_seconds is not None:
+
+            rewind_start_time = target_time - timedelta(seconds=rewind_seconds)
+
+            for i in range(target_index + 1):
+
+                line_time = self.replay.extract_timestamp(self.replay.lines[i])
+
+                # An unparseable line (e.g. a blank leading line before the
+                # file's first real entry) isn't necessarily at/after the
+                # boundary — skip over it rather than stopping the scan
+                # there, or a single early bad line would defeat the whole
+                # rewind (confirmed: a real trial log opens with exactly
+                # one blank line and this silently fell back to a full
+                # from-zero replay on every scrub before this fix).
+                if line_time is None:
+                    continue
+
+                if line_time < rewind_start_time:
+                    rewind_start_index = i + 1
+
+                else:
+                    break
+
         self.replay.reset()
+        self.replay.index = rewind_start_index
 
         # Default: no animation, process straight through the target line
         # (inclusive) in the instant/silent loop below.
@@ -1980,13 +2116,16 @@ class MainWindow(QMainWindow):
 
             window_start = target_time - timedelta(minutes=int(track_setting))
 
-            preroll_start_index = 0
+            preroll_start_index = rewind_start_index
 
-            for i in range(target_index + 1):
+            for i in range(rewind_start_index, target_index + 1):
 
                 line_time = self.replay.extract_timestamp(self.replay.lines[i])
 
-                if line_time is not None and line_time < window_start:
+                if line_time is None:
+                    continue
+
+                if line_time < window_start:
                     preroll_start_index = i + 1
 
                 else:
@@ -1997,11 +2136,12 @@ class MainWindow(QMainWindow):
         # Silently fast-forward (no timer pacing, same technique as Skip to
         # End) up to the start of the animated window — or straight to the
         # target if not animating. This is a synchronous re-simulation from
-        # the start of the file (ReplayService has no random-access seek),
-        # which on a deep scrub into a large capture can take many seconds —
-        # the wait cursor plus periodic processEvents() below only keep the
-        # window responsive/repainting during that time, they don't make it
-        # faster. The scrubber/Skip to End are disabled for the duration so
+        # rewind_start_index (ReplayService has no true random-access seek),
+        # which — especially with Unlimited settings forcing a from-the-start
+        # replay — can still take a while on a large capture. The wait
+        # cursor plus periodic processEvents() below only keep the window
+        # responsive/repainting during that time, they don't make it faster.
+        # The scrubber/Skip to End are disabled for the duration so
         # processEvents() can't let the user fire a second, overlapping seek
         # into this same synchronous loop.
         self.begin_bulk_replay()
@@ -2287,7 +2427,11 @@ class MainWindow(QMainWindow):
 
     def update_rssi_export_enabled(self):
 
-        self.export_rssi_button.setEnabled(self.selected_mmsi is not None and self.rssi_toggle.isChecked())
+        vessel = self.registry.get(self.selected_mmsi) if self.selected_mmsi is not None else None
+
+        self.export_rssi_button.setEnabled(
+            vessel is not None and bool(vessel.rssi_history) and self.rssi_toggle.isChecked()
+        )
 
     def export_rssi_png(self):
 

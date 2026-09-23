@@ -24,20 +24,31 @@ def test_export_button_disabled_with_no_vessel_selected(qapp):
     assert not window.export_rssi_button.isEnabled()
 
 
-def test_export_button_enabled_once_a_vessel_is_selected(qapp):
+def test_export_button_enabled_once_a_vessel_with_rssi_data_is_selected(qapp):
 
+    window = MainWindow()
+
+    select_vessel(window, 111111111, rssi_history=[(datetime.now(), -70)])
+
+    assert window.export_rssi_button.isEnabled()
+
+
+def test_export_button_disabled_for_a_vessel_with_no_rssi_data(qapp):
+
+    # A vessel can be selected before it's ever had a PSMT/RSSI reading —
+    # nothing to export yet, so the button shouldn't invite an empty file.
     window = MainWindow()
 
     select_vessel(window, 111111111)
 
-    assert window.export_rssi_button.isEnabled()
+    assert not window.export_rssi_button.isEnabled()
 
 
 def test_export_button_disabled_again_on_deselect(qapp):
 
     window = MainWindow()
 
-    select_vessel(window, 111111111)
+    select_vessel(window, 111111111, rssi_history=[(datetime.now(), -70)])
     assert window.export_rssi_button.isEnabled()
 
     window.selected_mmsi = None
@@ -50,7 +61,7 @@ def test_export_button_disabled_while_rssi_section_is_collapsed(qapp):
 
     window = MainWindow()
 
-    select_vessel(window, 111111111)
+    select_vessel(window, 111111111, rssi_history=[(datetime.now(), -70)])
     assert window.export_rssi_button.isEnabled()
 
     window.rssi_toggle.setChecked(False)
@@ -134,7 +145,7 @@ def test_export_csv_full_retained_in_live_mode_ignores_the_zoom_window(qapp, mon
     assert len(rows) == 3  # header + both rows, including the one outside the 5-minute zoom window
 
 
-def test_export_csv_cancelled_scope_writes_nothing(qapp, monkeypatch, tmp_path):
+def test_export_csv_cancelled_scope_writes_nothing(qapp, monkeypatch):
 
     window = MainWindow()
     select_vessel(window, 111111111, rssi_history=[(datetime.now(), -70)])
@@ -147,4 +158,3 @@ def test_export_csv_cancelled_scope_writes_nothing(qapp, monkeypatch, tmp_path):
     window.export_rssi_csv()
 
     assert saved == []
-    assert list(tmp_path.iterdir()) == []

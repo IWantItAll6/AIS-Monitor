@@ -124,6 +124,9 @@ class PreferencesDialog(QDialog):
 
         map_form.addRow(self.coastal_towns_only)
 
+        self.map_daylight_mode = QCheckBox("Daylight map colors (brighter, for direct sunlight)")
+        map_form.addRow(self.map_daylight_mode)
+
         self.coastal_threshold_nm = QComboBox()
         self.coastal_threshold_nm.setEditable(True)
         self.coastal_threshold_nm.addItems(["1", "2", "5", "10", "20"])
@@ -243,6 +246,8 @@ class PreferencesDialog(QDialog):
         self.coastal_threshold_nm.setCurrentText(self.settings["coastal_threshold_nm"])
         self.coastal_threshold_nm.setEnabled(self.settings["coastal_towns_only"])
 
+        self.map_daylight_mode.setChecked(self.settings.get("map_daylight_mode", False))
+
         self.vessel_color = self.settings["vessel_color"]
         self.set_swatch(self.vessel_color_button, self.vessel_color)
 
@@ -262,6 +267,8 @@ class PreferencesDialog(QDialog):
 
         self.settings["coastal_towns_only"] = self.coastal_towns_only.isChecked()
         self.settings["coastal_threshold_nm"] = self.coastal_threshold_nm.currentText()
+
+        self.settings["map_daylight_mode"] = self.map_daylight_mode.isChecked()
 
         self.settings["vessel_color"] = self.vessel_color
         self.settings["pinned_color"] = self.pinned_color

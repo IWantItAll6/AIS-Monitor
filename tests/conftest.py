@@ -1,6 +1,8 @@
 import pytest
 from PySide6.QtWidgets import QApplication
 
+from services.settings_service import SettingsService
+
 
 @pytest.fixture(scope="session")
 def qapp():
@@ -8,6 +10,21 @@ def qapp():
     app = QApplication.instance() or QApplication([])
 
     yield app
+
+
+@pytest.fixture(autouse=True)
+def isolate_settings_file(tmp_path, monkeypatch):
+    """Every MainWindow() construction calls SettingsService.load(), and
+    some code paths call .save() — without this, either would read or
+    write the real data/settings.json on disk, silently exposing the
+    developer's actual saved settings to tests or overwriting them.
+    Confirmed this really happens: a test exercising
+    MainWindow.show_preferences() did exactly that once, flipping a real
+    setting on a developer machine. Autouse, not opt-in, since almost
+    every test in this suite constructs a MainWindow either directly or
+    via another fixture."""
+
+    monkeypatch.setattr(SettingsService, "SETTINGS_FILE", tmp_path / "settings.json")
 
 
 def pytest_collection_modifyitems(items):

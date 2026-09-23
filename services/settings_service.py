@@ -51,6 +51,7 @@ class SettingsService:
         "show_place_names": True,
         "show_rssi_graph": True,
         "show_vessel_uptime": True,
+        "map_daylight_mode": False,
 
         "rssi_marker_points": False,
         "rssi_marker_endpoint": False,

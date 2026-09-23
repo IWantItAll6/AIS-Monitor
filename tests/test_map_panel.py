@@ -5,6 +5,7 @@ from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent
 
 from ui.main_window import MainWindow
+from ui.preferences_dialog import PreferencesDialog
 
 
 def test_zoom_in_is_capped_at_max_scale(qapp):
@@ -120,6 +121,78 @@ def test_set_static_track_fits_view_and_draws_without_error(qapp):
 
     map_view.clear_static_track()
     assert map_view.static_track is None
+
+
+def test_daylight_mode_overrides_the_fixed_map_palette(qapp):
+
+    window = MainWindow()
+    map_view = window.map_view
+
+    normal_water = map_view.WATER_COLOR
+
+    map_view.set_daylight_mode(True)
+
+    assert map_view.daylight_mode is True
+    assert map_view.WATER_COLOR == map_view.DAYLIGHT_PALETTE["WATER_COLOR"]
+    assert map_view.WATER_COLOR != normal_water
+
+    # The class-level default (what help_dialog.py reads directly off
+    # MapPanel, unaffected by any instance's mode) must be untouched.
+    assert type(map_view).WATER_COLOR == normal_water
+
+
+def test_daylight_mode_off_restores_the_normal_palette(qapp):
+
+    window = MainWindow()
+    map_view = window.map_view
+
+    normal_water = map_view.WATER_COLOR
+    normal_scale_bar = map_view.SCALE_BAR_COLOR
+
+    map_view.set_daylight_mode(True)
+    map_view.set_daylight_mode(False)
+
+    assert map_view.daylight_mode is False
+    assert map_view.WATER_COLOR == normal_water
+    assert map_view.SCALE_BAR_COLOR == normal_scale_bar
+
+
+def test_preferences_daylight_checkbox_round_trips_through_settings(qapp):
+
+    window = MainWindow()
+    assert window.settings["map_daylight_mode"] is False
+
+    dialog = PreferencesDialog(window.settings)
+    assert dialog.map_daylight_mode.isChecked() is False
+
+    dialog.map_daylight_mode.setChecked(True)
+    dialog.accept()
+
+    assert window.settings["map_daylight_mode"] is True
+
+    # A second dialog built from the now-updated settings should reflect it.
+    dialog2 = PreferencesDialog(window.settings)
+    assert dialog2.map_daylight_mode.isChecked() is True
+
+
+def test_accepting_preferences_applies_daylight_mode_to_the_live_map(qapp, monkeypatch):
+
+    window = MainWindow()
+    assert not window.map_view.daylight_mode
+
+    class FakePreferencesDialog:
+
+        def __init__(self, settings):
+            settings["map_daylight_mode"] = True
+
+        def exec(self):
+            return True
+
+    monkeypatch.setattr("ui.main_window.PreferencesDialog", FakePreferencesDialog)
+
+    window.show_preferences()
+
+    assert window.map_view.daylight_mode is True
 
 
 def test_pan_wraps_center_lon_instead_of_drifting_unbounded(qapp):

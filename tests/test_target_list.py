@@ -1,6 +1,19 @@
 from datetime import datetime, timedelta
 
+from PySide6.QtCore import Qt
+
 from ui.main_window import MainWindow
+
+
+def test_detail_panel_values_are_selectable_for_copying(qapp):
+
+    # Found by the user: plain QLabel text isn't selectable by default, so
+    # copying a vessel's position (or MMSI, etc.) meant retyping it by hand
+    # instead of copy-pasting.
+    window = MainWindow()
+
+    for _name, _caption, value_label, _default_visible in window.DETAIL_FIELDS:
+        assert value_label.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse
 
 
 def test_selected_mmsi_cleared_when_its_vessel_times_out(qapp):

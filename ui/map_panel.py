@@ -42,6 +42,28 @@ class MapPanel(QWidget):
     PIN_RING_COLOR = QColor(255, 255, 255, 220)
     PIN_RING_RADIUS = 9
 
+    # An alternate palette for direct-sunlight use — deliberately a
+    # separate toggle from the app's Dark/Light theme (see
+    # set_daylight_mode), not derived from it: the normal dark-navy chart
+    # look is independent of that theme already (see the class constants
+    # above, always the same regardless of Dark/Light) and is close to the
+    # worst case for outdoor glare — dark UI elements wash out hardest
+    # under bright ambient light. This flips to a bright, high-contrast
+    # look instead, closer to a marine chartplotter's "Day" mode than to
+    # a lightened version of the normal palette. Only the fixed map
+    # elements are covered here — user-configurable vessel/pinned colors
+    # (set via Preferences) are left alone, since orange/gold already read
+    # reasonably well against either water color.
+    DAYLIGHT_PALETTE = {
+        "WATER_COLOR": QColor(210, 230, 240),
+        "LAND_COLOR": QColor(205, 185, 140),
+        "PLACE_COLOR": QColor(30, 30, 30),
+        "OWN_SHIP_COLOR": QColor(0, 80, 190),
+        "OWN_TRACK_COLOR": QColor(0, 80, 190, 210),
+        "SCALE_BAR_COLOR": QColor(20, 20, 20),
+        "PIN_RING_COLOR": QColor(20, 20, 20, 220),
+    }
+
     # The scale bar's fixed on-screen length (a quarter of the map's width)
     # with tick marks subdividing it — its on-screen length never changes;
     # the E24 nice-number value labelling it is a rounded approximation of
@@ -180,6 +202,8 @@ class MapPanel(QWidget):
 
         self.vessel_color = QColor(self.DEFAULT_VESSEL_COLOR)
         self.pinned_color = QColor(self.DEFAULT_PINNED_COLOR)
+
+        self.daylight_mode = False
 
         # Last successful (radius, angle) per vessel MMSI — tried first each
         # frame before searching fresh, so a label's screen position stays
@@ -323,6 +347,21 @@ class MapPanel(QWidget):
     def set_pinned_color(self, hex_color):
 
         self.pinned_color = QColor(hex_color)
+
+        self.update()
+
+    def set_daylight_mode(self, enabled):
+
+        self.daylight_mode = enabled
+
+        for name, color in self.DAYLIGHT_PALETTE.items():
+
+            # Assigning an instance attribute shadows the class constant of
+            # the same name for this MapPanel only — help_dialog.py reads
+            # these straight off the class (MapPanel.WATER_COLOR etc.),
+            # deliberately unaffected, so its legend stays consistent
+            # regardless of the live map's mode.
+            setattr(self, name, color if enabled else getattr(type(self), name))
 
         self.update()
 
