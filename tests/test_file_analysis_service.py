@@ -7,7 +7,9 @@ import pytest
 from pyais.encode import encode_dict
 
 import services.file_analysis_service as file_analysis_service
-from services.file_analysis_service import analyze_file, format_duration, VesselAnalysis, FileAnalysisThread
+from services.file_analysis_service import (
+    analyze_file, extract_rssi_history, format_duration, VesselAnalysis, FileAnalysisThread
+)
 
 SAMPLE_LOG = "resources/sample_replay.log"
 
@@ -228,6 +230,19 @@ def ais_sentence(msg_type, mmsi, lat, lon, speed, cs=None):
     return encode_dict(fields, sentence_type="VDM")[0]
 
 
+def static_data_sentence(mmsi, shipname):
+    """Type 24 Part A ("Static Data Report") — unlike type 5, this fits in
+    a single sentence, which is all write_log()'s one-line-per-entry format
+    needs to carry a shipname."""
+
+    return encode_dict({"type": 24, "mmsi": mmsi, "shipname": shipname, "partno": 0}, sentence_type="VDM")[0]
+
+
+def psmt_sentence(rssi):
+
+    return f"$PSMT,,,,,,,,,,{rssi},*00"
+
+
 def test_estimate_tx_loss_runs_by_default(tmp_path):
 
     # No estimate_tx_loss flag to opt into anymore — measured to add no
@@ -377,6 +392,107 @@ def test_file_analysis_thread_emits_cancelled_when_analyze_file_returns_none(qap
     thread.start()
 
     assert pump_until(qapp, lambda: len(cancelled) >= 1)
+
+
+def test_analyze_file_accumulates_track_history(tmp_path):
+
+    start = datetime(2026, 1, 1, 0, 0, 0)
+
+    entries = [
+        (start, ais_sentence(1, 111111111, 50.0, -5.0, 10.0)),
+        (start + timedelta(seconds=10), ais_sentence(1, 111111111, 50.01, -5.01, 10.0)),
+    ]
+
+    vessel = analyze_file(write_log(tmp_path, entries))[0]
+
+    assert vessel.track == [
+        (start, 50.0, -5.0),
+        (start + timedelta(seconds=10), 50.01, -5.01),
+    ]
+
+
+def test_analyze_file_splits_reused_mmsi_by_name(tmp_path):
+    """Field trials reuse one MMSI across differently-named test vessels
+    within a single file — each name must get its own independent row, not
+    one row with merged stats."""
+
+    start = datetime(2026, 1, 1, 0, 0, 0)
+    mmsi = 111111111
+
+    entries = [
+        (start, static_data_sentence(mmsi, "ALPHA")),
+        (start + timedelta(seconds=10), ais_sentence(1, mmsi, 50.0, -5.0, 10.0)),
+        (start + timedelta(minutes=30), static_data_sentence(mmsi, "BRAVO")),
+        (start + timedelta(minutes=30, seconds=10), ais_sentence(1, mmsi, 51.0, -6.0, 5.0)),
+    ]
+
+    analyses = analyze_file(write_log(tmp_path, entries))
+
+    assert [a.name for a in analyses] == ["ALPHA", "BRAVO"]
+    assert all(a.mmsi == mmsi for a in analyses)
+
+    alpha, bravo = analyses
+
+    assert alpha.tx_count == 2
+    assert alpha.position_report_count == 1
+    assert alpha.first_seen == start
+
+    assert bravo.tx_count == 2
+    assert bravo.position_report_count == 1
+    assert bravo.first_seen == start + timedelta(minutes=30)
+
+    # Independent stats — BRAVO's report must not have touched ALPHA's.
+    assert alpha.distance_traveled_nm == 0.0
+    assert bravo.distance_traveled_nm == 0.0
+
+
+def test_analyze_file_merges_blank_name_leadin_into_first_name(tmp_path):
+    """A position report arriving before any static-data message is normal
+    (Class B, or static data just hasn't come round yet) — not a
+    "different vessel" the way an actual name change is, so it must land
+    under the eventual real name rather than staying its own permanent
+    blank-name row."""
+
+    start = datetime(2026, 1, 1, 0, 0, 0)
+    mmsi = 111111111
+
+    entries = [
+        (start, ais_sentence(1, mmsi, 50.0, -5.0, 10.0)),
+        (start + timedelta(seconds=30), static_data_sentence(mmsi, "ALPHA")),
+    ]
+
+    analyses = analyze_file(write_log(tmp_path, entries))
+
+    assert len(analyses) == 1
+
+    vessel = analyses[0]
+    assert vessel.name == "ALPHA"
+    assert vessel.tx_count == 2
+    assert vessel.position_report_count == 1
+    assert vessel.first_seen == start
+
+
+def test_extract_rssi_history_scoped_to_one_mmsi(tmp_path):
+
+    start = datetime(2026, 1, 1, 0, 0, 0)
+
+    entries = [
+        (start, ais_sentence(1, 111111111, 50.0, -5.0, 10.0)),
+        (start, psmt_sentence(-70)),
+        (start + timedelta(seconds=10), ais_sentence(1, 222222222, 51.0, -6.0, 5.0)),
+        (start + timedelta(seconds=10), psmt_sentence(-90)),
+        (start + timedelta(seconds=20), ais_sentence(1, 111111111, 50.01, -5.01, 10.0)),
+        (start + timedelta(seconds=20), psmt_sentence(-72)),
+    ]
+
+    path = write_log(tmp_path, entries)
+
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    history = extract_rssi_history(lines, 111111111)
+
+    assert history == [(start, -70), (start + timedelta(seconds=20), -72)]
 
 
 def test_file_analysis_thread_emits_failed_on_exception(qapp, monkeypatch):

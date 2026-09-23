@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent
 
@@ -70,6 +71,55 @@ def test_fit_to_vessels_is_floored_at_min_scale(qapp):
     map_view.fit_to_vessels()
 
     assert map_view.scale == map_view.MIN_SCALE
+
+
+def test_fit_to_points_matches_fit_to_vessels_for_the_same_points(qapp):
+
+    # fit_to_vessels() is a thin wrapper around fit_to_points() built from
+    # self.vessels — the two must produce identical center/scale for an
+    # equivalent point list.
+    window = MainWindow()
+    map_view = window.map_view
+
+    map_view.vessels = [
+        SimpleNamespace(lat=50.0, lon=-2.0),
+        SimpleNamespace(lat=51.0, lon=-3.0),
+    ]
+    map_view.own_position = {"lat": None, "lon": None, "fix": False}
+
+    map_view.fit_to_vessels()
+    via_vessels = (map_view.center_lat, map_view.center_lon, map_view.scale)
+
+    map_view.center_lat, map_view.center_lon, map_view.scale = 0.0, 0.0, map_view.DEFAULT_SCALE
+
+    map_view.fit_to_points([(50.0, -2.0), (51.0, -3.0)])
+    via_points = (map_view.center_lat, map_view.center_lon, map_view.scale)
+
+    assert via_points == via_vessels
+
+
+def test_set_static_track_fits_view_and_draws_without_error(qapp):
+
+    window = MainWindow()
+    map_view = window.map_view
+
+    track = [
+        (None, 50.0, -2.0),
+        (None, 50.5, -2.5),
+        (None, 51.0, -3.0),
+    ]
+
+    map_view.set_static_track(track)
+
+    assert map_view.static_track == track
+    assert map_view.center_lat == pytest.approx(50.5)
+
+    # grab() forces a real paintEvent — draw_static_track must not raise
+    # for a widget with no live vessels/coastline data assumptions broken.
+    map_view.grab()
+
+    map_view.clear_static_track()
+    assert map_view.static_track is None
 
 
 def test_pan_wraps_center_lon_instead_of_drifting_unbounded(qapp):

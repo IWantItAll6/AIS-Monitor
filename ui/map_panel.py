@@ -172,6 +172,12 @@ class MapPanel(QWidget):
         self.scrub_animating = False
         self.empty_hint = False
 
+        # A standalone (datetime, lat, lon) list to draw instead of/
+        # alongside live vessel state — used by VesselTrackDialog to show
+        # one File Analysis vessel's complete, untrimmed journey, which has
+        # no corresponding live Vessel object to draw via draw_vessels().
+        self.static_track = None
+
         self.vessel_color = QColor(self.DEFAULT_VESSEL_COLOR)
         self.pinned_color = QColor(self.DEFAULT_PINNED_COLOR)
 
@@ -344,6 +350,44 @@ class MapPanel(QWidget):
 
         self.update()
 
+    def set_static_track(self, points):
+        """points: a list of (datetime, lat, lon) tuples, same shape as a
+        live Vessel.track — draws a standalone polyline independent of
+        self.vessels/update_vessels() and fits the view to it."""
+
+        self.static_track = points
+
+        self.fit_to_points([(lat, lon) for _, lat, lon in points])
+        self.update()
+
+    def clear_static_track(self):
+
+        self.static_track = None
+
+        self.update()
+
+    def draw_static_track(self, painter):
+
+        track_color = QColor(self.vessel_color)
+        track_color.setAlpha(210)
+        painter.setPen(QPen(track_color, 2))
+
+        polyline = QPolygonF([self.project(lat, lon) for _, lat, lon in self.static_track])
+
+        painter.drawPolyline(polyline)
+
+        r = self.MARKER_HALF_SIZE
+
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        start_lat, start_lon = self.static_track[0][1], self.static_track[0][2]
+        painter.setBrush(QColor(60, 200, 90))
+        painter.drawEllipse(self.project(start_lat, start_lon), r, r)
+
+        end_lat, end_lon = self.static_track[-1][1], self.static_track[-1][2]
+        painter.setBrush(self.vessel_color)
+        painter.drawEllipse(self.project(end_lat, end_lon), r, r)
+
     def fit_to_vessels(self):
 
         positioned = [(v.lat, v.lon) for v in self.vessels if v.lat is not None and v.lon is not None]
@@ -355,6 +399,10 @@ class MapPanel(QWidget):
 
         if self.own_position.get("fix") and own_lat is not None and own_lon is not None:
             positioned.append((own_lat, own_lon))
+
+        self.fit_to_points(positioned)
+
+    def fit_to_points(self, positioned):
 
         if not positioned:
             return
@@ -488,6 +536,10 @@ class MapPanel(QWidget):
 
         self.draw_places(painter)
         self.draw_vessels(painter)
+
+        if self.static_track:
+            self.draw_static_track(painter)
+
         self.draw_scale_bar(painter)
 
         if self.scrub_animating:

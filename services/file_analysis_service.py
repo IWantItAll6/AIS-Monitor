@@ -10,7 +10,11 @@ from parsers.gnss_parser import GNSSParser
 from services.vessel_registry import VesselRegistry
 from services.replay_service import ReplayService, extract_sentence
 from services.geo import calculate_range_bearing
-from services.ais_reporting_intervals import expected_interval_seconds, update_low_speed_streak
+from services.ais_reporting_intervals import (
+    expected_interval_seconds, update_low_speed_streak, CLASS_A_MSG_TYPES, CLASS_B_MSG_TYPES
+)
+
+POSITION_REPORT_MSG_TYPES = CLASS_A_MSG_TYPES + CLASS_B_MSG_TYPES
 
 
 @dataclass
@@ -43,6 +47,12 @@ class VesselAnalysis:
 
     range_min_nm: float | None = None
     range_max_nm: float | None = None
+
+    # Full, untrimmed (datetime, lat, lon) history for this name-period —
+    # same shape as models.vessel.Vessel.track — so "show this vessel's
+    # complete journey" has real data to draw, unlike the live app's own
+    # track which is bounded by the Track Length setting.
+    track: list = field(default_factory=list)
 
     # expected_tx is a fractional running sum (each gap between reports
     # contributes gap_seconds / interval_at_that_time, not a whole number),
@@ -152,16 +162,34 @@ def analyze_file(filename, cancel_event=None, progress_callback=None, progress_i
     psmt_parser = PSMTParser()
     gnss_parser = GNSSParser()
 
+    # Keyed by (mmsi, name) rather than mmsi alone — field trials reuse the
+    # same MMSI for different, differently-named test vessels within one
+    # file, and merging their stats under one row would be meaningless.
+    # Messages before any name is known (blank name — normal for Class B,
+    # or before a static-data message arrives, not a "different vessel")
+    # land under (mmsi, "") and get folded into the first real name that
+    # shows up for that MMSI, rather than staying a permanent blank row.
     analyses = {}
-    last_ais_mmsi = None
+    last_analysis_key = None
     own_position = {"lat": None, "lon": None, "fix": False}
 
-    def get_analysis(mmsi):
+    def route_analysis(mmsi, name):
 
-        if mmsi not in analyses:
-            analyses[mmsi] = VesselAnalysis(mmsi=mmsi)
+        name = name or ""
+        key = (mmsi, name)
 
-        return analyses[mmsi]
+        if key not in analyses:
+
+            unnamed_key = (mmsi, "")
+
+            if name and unnamed_key in analyses:
+                analyses[key] = analyses.pop(unnamed_key)
+                analyses[key].name = name
+
+            else:
+                analyses[key] = VesselAnalysis(mmsi=mmsi, name=name)
+
+        return key, analyses[key]
 
     while replay.has_next():
 
@@ -182,11 +210,8 @@ def analyze_file(filename, cancel_event=None, progress_callback=None, progress_i
 
             if vessel:
 
-                last_ais_mmsi = vessel.mmsi
+                last_analysis_key, analysis = route_analysis(vessel.mmsi, vessel.name)
 
-                analysis = get_analysis(vessel.mmsi)
-
-                analysis.name = vessel.name
                 analysis.callsign = vessel.callsign
                 analysis.tx_count += 1
 
@@ -197,11 +222,24 @@ def analyze_file(filename, cancel_event=None, progress_callback=None, progress_i
 
                     analysis.last_seen = timestamp
 
-                if vessel.sog is not None:
+                # vessel is the shared, persistent per-mmsi object the AIS
+                # parser keeps — sog/lat/lon stay set to whatever a past
+                # position report last put there even while processing a
+                # later static-data (type 5/24) message, which carries
+                # none of those fields itself. Without this guard, a
+                # static-data message interleaved between position reports
+                # would silently re-add that stale, unchanged speed/position
+                # a second time — inflating avg_speed and, since the split
+                # by name above (route_analysis), spuriously bleeding a
+                # position from one name-period into the very start of the
+                # next before it's ever received its own real report.
+                is_position_report = ais_parser.last_msg_type in POSITION_REPORT_MSG_TYPES
+
+                if is_position_report and vessel.sog is not None:
                     analysis.speed_sum += vessel.sog
                     analysis.speed_count += 1
 
-                if vessel.lat is not None and vessel.lon is not None:
+                if is_position_report and vessel.lat is not None and vessel.lon is not None:
 
                     if analysis._last_position is not None:
 
@@ -212,6 +250,7 @@ def analyze_file(filename, cancel_event=None, progress_callback=None, progress_i
                         analysis.distance_traveled_nm += distance_nm
 
                     analysis._last_position = (vessel.lat, vessel.lon)
+                    analysis.track.append((timestamp, vessel.lat, vessel.lon))
 
                     if own_position["fix"]:
 
@@ -270,9 +309,9 @@ def analyze_file(filename, cancel_event=None, progress_callback=None, progress_i
 
             psmt = psmt_parser.process(sentence)
 
-            if psmt and last_ais_mmsi is not None:
+            if psmt and last_analysis_key is not None:
 
-                analysis = get_analysis(last_ais_mmsi)
+                analysis = analyses[last_analysis_key]
                 rssi = psmt["rssi"]
 
                 analysis.rssi_sum += rssi
@@ -290,7 +329,51 @@ def analyze_file(filename, cancel_event=None, progress_callback=None, progress_i
     if progress_callback is not None:
         progress_callback(total_lines, total_lines)
 
-    return sorted(analyses.values(), key=lambda a: a.mmsi)
+    # first_seen can be None only if the file has no parseable timestamps
+    # at all for that entry — datetime.min keeps those sortable rather than
+    # raising on a None/datetime comparison.
+    return sorted(analyses.values(), key=lambda a: (a.mmsi, a.first_seen or datetime.min))
+
+
+def extract_rssi_history(lines, target_mmsi):
+    """Full-file (timestamp, rssi) history for one vessel, independent of
+    whatever MainWindow.trim_vessel_rssi_history has kept live — reuses
+    analyze_file()'s "last AIVDM MMSI, then correlate the next PSMT to it"
+    pattern, scoped to a single MMSI and an already-loaded line list (no
+    file re-read, no VesselAnalysis/stats bookkeeping needed). `lines` is
+    the same raw, un-rstripped list ReplayService.load_file() produces
+    (e.g. an already-loaded ReplayService's own .lines)."""
+
+    replay = ReplayService()
+
+    ais_parser = AISParser(VesselRegistry())
+    psmt_parser = PSMTParser()
+
+    history = []
+    last_mmsi = None
+
+    for raw_line in lines:
+
+        line = raw_line.rstrip()
+
+        timestamp = replay.update_time(line)
+        sentence = extract_sentence(line)
+
+        if sentence.startswith("!AIVDM"):
+
+            vessel = ais_parser.process(sentence, timestamp)
+
+            if vessel:
+                last_mmsi = vessel.mmsi
+
+        elif sentence.startswith("$PSMT"):
+
+            psmt = psmt_parser.process(sentence)
+
+            if psmt and last_mmsi == target_mmsi:
+                history.append((timestamp, psmt["rssi"]))
+
+    return history
 
 
 class FileAnalysisThread(QThread):

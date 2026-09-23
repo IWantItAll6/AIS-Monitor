@@ -15,8 +15,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QFontMetrics
 
 from ui.vessel_tree_item import VesselTreeItem
+from ui.vessel_track_dialog import VesselTrackDialog
 from services.geo import convert_distance, UNIT_SUFFIX
 from services.file_analysis_service import format_duration
+
+# A custom role (beyond ItemDataRole.UserRole, which column 0 already uses
+# for MMSI's numeric sort value) for stashing the row's VesselAnalysis
+# object itself, so "Show Track" can retrieve it straight from the
+# selected item without a separate row-index lookup table.
+ANALYSIS_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 def _distance_cell(field_name):
@@ -179,6 +186,13 @@ class FileAnalysisDialog(QDialog):
 
         button_layout = QHBoxLayout()
 
+        self.show_track_button = QPushButton("Show Track")
+        self.show_track_button.clicked.connect(self.show_track)
+        self.show_track_button.setEnabled(False)
+        button_layout.addWidget(self.show_track_button)
+
+        self.tree.itemSelectionChanged.connect(self.update_show_track_button)
+
         self.export_button = QPushButton("Export CSV...")
         self.export_button.clicked.connect(self.export_csv)
         button_layout.addWidget(self.export_button)
@@ -217,7 +231,35 @@ class FileAnalysisDialog(QDialog):
                 if sort_value is not None:
                     item.setData(column, Qt.ItemDataRole.UserRole, sort_value)
 
+            item.setData(0, ANALYSIS_ROLE, analysis)
+
             self.tree.addTopLevelItem(item)
+
+    def selected_analysis(self):
+
+        item = self.tree.currentItem()
+
+        return item.data(0, ANALYSIS_ROLE) if item else None
+
+    def update_show_track_button(self):
+
+        analysis = self.selected_analysis()
+        has_track = bool(analysis and analysis.track)
+
+        self.show_track_button.setEnabled(has_track)
+        self.show_track_button.setToolTip(
+            "" if has_track else "This vessel has no position fixes in the file to show a track for."
+        )
+
+    def show_track(self):
+
+        analysis = self.selected_analysis()
+
+        if not analysis or not analysis.track:
+            return
+
+        dialog = VesselTrackDialog(analysis, self)
+        dialog.exec()
 
     def fit_columns_to_contents(self):
         """Sizes every column to its own widest header/cell text, measured

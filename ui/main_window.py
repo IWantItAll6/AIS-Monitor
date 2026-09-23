@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
     QSlider,
     QToolTip,
     QLineEdit,
-    QProgressDialog
+    QProgressDialog,
+    QMenu
 )
 
 from PySide6.QtCore import Qt, QSize, QTimer
@@ -37,7 +38,7 @@ from ui.help_dialog import HelpDialog
 from ui.about_dialog import AboutDialog
 from ui.error_log_dialog import ErrorLogDialog
 from ui.file_analysis_dialog import FileAnalysisDialog
-from services.file_analysis_service import FileAnalysisThread
+from services.file_analysis_service import FileAnalysisThread, extract_rssi_history
 from services.error_log import ErrorLog
 from services.settings_service import SettingsService
 from services.vessel_registry import VesselRegistry
@@ -448,6 +449,17 @@ class MainWindow(QMainWindow):
         self.graph_zoom_reset_button.setMaximumWidth(48)
         zoom_layout.addWidget(self.graph_zoom_reset_button)
 
+        self.export_rssi_button = QPushButton("Export")
+        self.export_rssi_button.setMaximumWidth(54)
+        self.export_rssi_button.setEnabled(False)
+
+        export_rssi_menu = QMenu(self.export_rssi_button)
+        export_rssi_menu.addAction("Image (PNG)...", self.export_rssi_png)
+        export_rssi_menu.addAction("Data (CSV)...", self.export_rssi_csv)
+        self.export_rssi_button.setMenu(export_rssi_menu)
+
+        zoom_layout.addWidget(self.export_rssi_button)
+
         rssi_container, self.rssi_toggle, self.rssi_stats_label = self.create_collapsible_section(
             "RSSI History", self.rssi_graph, "show_rssi_graph", extra_header_widget=zoom_controls
         )
@@ -466,6 +478,8 @@ class MainWindow(QMainWindow):
 
         self.rssi_graph.zoom_requested.connect(self.on_graph_zoom_wheel)
         self.uptime_bar.zoom_requested.connect(self.on_graph_zoom_wheel)
+
+        self.rssi_toggle.toggled.connect(self.update_rssi_export_enabled)
 
         self.update_graph_zoom_label()
 
@@ -2240,6 +2254,8 @@ class MainWindow(QMainWindow):
         rssi_stats = RssiGraphWidget.compute_stats(visible_rssi_history)
         self.rssi_stats_label.setText(self.format_rssi_stats(rssi_stats))
 
+        self.update_rssi_export_enabled()
+
         if self.replay.current_time is not None:
 
             self.uptime_bar.set_segments(
@@ -2268,6 +2284,104 @@ class MainWindow(QMainWindow):
             return ""
 
         return f"{uptime_pct:.0f}% up"
+
+    def update_rssi_export_enabled(self):
+
+        self.export_rssi_button.setEnabled(self.selected_mmsi is not None and self.rssi_toggle.isChecked())
+
+    def export_rssi_png(self):
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Export RSSI Graph Image", "rssi_graph.png", "PNG Image (*.png)"
+        )
+
+        if not filename:
+            return
+
+        # Whatever's currently on screen — zoom window included, same as a
+        # real screenshot would capture.
+        self.rssi_graph.grab().save(filename, "PNG")
+
+        self.status_bar.showMessage(f"RSSI graph image exported to {filename}", 5000)
+
+    def prompt_rssi_export_scope(self, full_label):
+        """Returns "current", "full", or None (cancelled) — split out from
+        export_rssi_csv() so tests can drive the choice directly instead of
+        simulating a real QMessageBox click."""
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Export RSSI Data")
+        box.setText("Export which RSSI data?")
+
+        current_view_button = box.addButton("Current View", QMessageBox.ButtonRole.AcceptRole)
+        full_button = box.addButton(full_label, QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+
+        box.exec()
+
+        clicked = box.clickedButton()
+
+        if clicked == current_view_button:
+            return "current"
+
+        if clicked == full_button:
+            return "full"
+
+        return None
+
+    def export_rssi_csv(self):
+
+        vessel = self.registry.get(self.selected_mmsi) if self.selected_mmsi is not None else None
+
+        if vessel is None:
+            return
+
+        # "Full File" only means something with a loaded replay log to
+        # re-scan — Live mode has no bounded file, just whatever's still
+        # retained.
+        full_label = "Full File" if self.replay.filename else "Full Retained History"
+
+        scope = self.prompt_rssi_export_scope(full_label)
+
+        if scope == "current":
+
+            window_start = (
+                self.graph_window_start(self.replay.current_time) if self.replay.current_time is not None else None
+            )
+
+            history = (
+                [(t, r) for t, r in vessel.rssi_history if t >= window_start]
+                if window_start is not None else list(vessel.rssi_history)
+            )
+
+        elif scope == "full":
+
+            history = (
+                extract_rssi_history(self.replay.lines, self.selected_mmsi)
+                if self.replay.filename else list(vessel.rssi_history)
+            )
+
+        else:
+            return
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Export RSSI Data as CSV", "rssi_history.csv", "CSV File (*.csv)"
+        )
+
+        if not filename:
+            return
+
+        import csv
+
+        with open(filename, "w", newline="", encoding="utf-8") as f:
+
+            writer = csv.writer(f)
+            writer.writerow(["Timestamp", "RSSI (dBm)"])
+
+            for timestamp, rssi in history:
+                writer.writerow([timestamp.strftime("%Y-%m-%d %H:%M:%S.%f") if timestamp else "", rssi])
+
+        self.status_bar.showMessage(f"RSSI data exported to {filename}", 5000)
 
     def reset_session(self):
 
@@ -2336,6 +2450,8 @@ class MainWindow(QMainWindow):
 
         self.uptime_bar.clear()
         self.uptime_stats_label.setText("")
+
+        self.update_rssi_export_enabled()
 
     def reset_vessel_data(self, vessel):
 
