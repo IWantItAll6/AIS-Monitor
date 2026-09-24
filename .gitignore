@@ -49,3 +49,9 @@ dist/
 resources/*
 !resources/README.md
 !resources/sample_replay.log
+
+# Local-only working notes and Claude Code config - never committed
+SESSION_NOTES.md
+TODO.md
+.claude/
+.mcp.json
