@@ -161,7 +161,10 @@ At <b>1x</b>, replay matches the file's own recorded timing — a 10-second
 gap between two messages plays back over roughly 10 real seconds, and
 several sentences logged at the exact same instant (common with real
 receiver output) always play together rather than being spread out.
-<b>Slower</b>/<b>Faster</b> scale that real-time pacing up or down.
+<b>Slower</b>/<b>Faster</b> scale that real-time pacing up or down, and
+take effect immediately. On a busy file where the map can't redraw after
+every single message, higher speeds still hold their pace — the map just
+updates in slightly bigger steps rather than playback falling behind.
 </p>
 <p>
 Drag the scrubber in the toolbar to jump to a different point in a loaded
@@ -258,7 +261,8 @@ gold, so it never stops reading as a distress mark.
 <b>Preferences &gt; Map</b> you can further restrict labels to only towns
 within a given distance of the coast. The <b>Zoom to Fit</b> command
 (Run menu, or Ctrl+0) reframes the map to show every currently positioned
-target.
+target. Vessels beyond the <b>Range Limit</b> (see <b>Settings</b> below,
+60 NM by default) are hidden from the map and target list.
 </p>
 
 <h3>Raw Data</h3>
