@@ -53,6 +53,14 @@ class SettingsService:
         "show_vessel_uptime": True,
         "map_daylight_mode": False,
 
+        # Hides vessels further than this from the map and vessel list (like
+        # OpenCPN's range limit) — in the user's distance_unit, 0 = Off.
+        # 60 NM is roughly ten sea-level horizons; real receivers can pick
+        # up targets 150+ NM out, which is mostly clutter. Only affects
+        # display: recording, broadcast and File Analysis still see
+        # everything.
+        "range_limit": 60,
+
         "rssi_marker_points": False,
         "rssi_marker_endpoint": False,
         "rssi_marker_axis_ticks": False,

@@ -33,6 +33,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import time
 
+from services.range_limit import range_limit_nm, within_range_limit
+
 from ui.communications_dialog import CommunicationsDialog
 from ui.preferences_dialog import PreferencesDialog
 from ui.help_dialog import HelpDialog
@@ -1309,9 +1311,19 @@ class MainWindow(QMainWindow):
 
                 item.setData(6, Qt.ItemDataRole.UserRole, age_seconds)
 
-        self.targets_label.setText(f"Targets ({len(self.registry.vessels)})")
+        # Ranges were just refreshed above, so this is the point to apply
+        # the Range Limit — map and list both hide the same vessels.
+        limit_nm = self.current_range_limit_nm()
+        in_range = [v for v in self.registry.all() if within_range_limit(v, limit_nm)]
 
-        self.map_view.update_vessels(list(self.registry.all()), self.own_position, self.own_track, self.own_mmsi)
+        total = len(self.registry.vessels)
+
+        if len(in_range) < total:
+            self.targets_label.setText(f"Targets ({len(in_range)} of {total})")
+        else:
+            self.targets_label.setText(f"Targets ({total})")
+
+        self.map_view.update_vessels(in_range, self.own_position, self.own_track, self.own_mmsi)
 
         self.update_status()
 
@@ -1324,17 +1336,27 @@ class MainWindow(QMainWindow):
             if vessel:
                 self.show_vessel_details(vessel)
 
+    def current_range_limit_nm(self):
+
+        return range_limit_nm(self.settings.get("range_limit", 60), self.settings.get("distance_unit", "NM"))
+
     def apply_target_filter(self):
 
         query = self.target_search.text().strip().lower()
 
+        limit_nm = self.current_range_limit_nm()
+
         for mmsi, item in self.tree_items.items():
+
+            vessel = self.registry.get(mmsi)
+
+            if vessel is not None and not within_range_limit(vessel, limit_nm):
+                item.setHidden(True)
+                continue
 
             if not query:
                 item.setHidden(False)
                 continue
-
-            vessel = self.registry.get(mmsi)
 
             name = (vessel.name or "").lower() if vessel else ""
 
@@ -1468,6 +1490,10 @@ class MainWindow(QMainWindow):
                 self.settings["coastal_towns_only"], float(self.settings["coastal_threshold_nm"])
             )
             self.recorder.directory = Path(self.settings["recordings_folder"])
+
+            # Apply a changed Range Limit (or distance unit, which it's
+            # expressed in) right away rather than on the next message.
+            self.update_target_tree()
 
     def create_menu(self):
         menu = self.menuBar()

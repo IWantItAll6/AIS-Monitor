@@ -10,9 +10,13 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialogButtonBox,
     QFileDialog,
-    QColorDialog
+    QColorDialog,
+    QSpinBox
 )
 from PySide6.QtGui import QColor
+
+from services.geo import UNIT_SUFFIX
+from services.range_limit import convert_range_limit
 
 
 class PreferencesDialog(QDialog):
@@ -127,6 +131,18 @@ class PreferencesDialog(QDialog):
         self.map_daylight_mode = QCheckBox("Daylight map colors (brighter, for direct sunlight)")
         map_form.addRow(self.map_daylight_mode)
 
+        # 0 shows as "Off" (specialValueText replaces the minimum's text).
+        self.range_limit = QSpinBox()
+        self.range_limit.setRange(0, 1000)
+        self.range_limit.setSingleStep(10)
+        self.range_limit.setSpecialValueText("Off")
+        self.range_limit.setToolTip(
+            "Hide vessels further away than this from the map and vessel list. "
+            "Pinned vessels are always shown."
+        )
+
+        map_form.addRow("Range Limit", self.range_limit)
+
         self.coastal_threshold_nm = QComboBox()
         self.coastal_threshold_nm.setEditable(True)
         self.coastal_threshold_nm.addItems(["1", "2", "5", "10", "20"])
@@ -237,10 +253,31 @@ class PreferencesDialog(QDialog):
         if folder:
             self.recordings_folder.setText(folder)
 
+    def on_distance_unit_changed(self, unit):
+
+        # The limit is stored in the chosen unit — convert it so switching
+        # NM -> Km keeps it at roughly the same real distance instead of
+        # silently turning 60 NM into 60 km.
+        self.range_limit.setValue(convert_range_limit(self.range_limit.value(), self._range_limit_unit, unit))
+        self._range_limit_unit = unit
+        self.update_range_limit_suffix()
+
+    def update_range_limit_suffix(self):
+
+        self.range_limit.setSuffix(f" {UNIT_SUFFIX.get(self._range_limit_unit, self._range_limit_unit)}")
+
     def load_settings(self):
         self.theme.setCurrentText(self.settings["theme"])
 
         self.distance_unit.setCurrentText(self.settings["distance_unit"])
+
+        self.range_limit.setValue(int(self.settings.get("range_limit", 60)))
+        self._range_limit_unit = self.distance_unit.currentText()
+        self.update_range_limit_suffix()
+
+        # Connected after the initial setCurrentText() above, so loading
+        # doesn't itself count as a unit change.
+        self.distance_unit.currentTextChanged.connect(self.on_distance_unit_changed)
 
         self.coastal_towns_only.setChecked(self.settings["coastal_towns_only"])
         self.coastal_threshold_nm.setCurrentText(self.settings["coastal_threshold_nm"])
@@ -264,6 +301,8 @@ class PreferencesDialog(QDialog):
         self.settings["theme"] = self.theme.currentText()
 
         self.settings["distance_unit"] = self.distance_unit.currentText()
+
+        self.settings["range_limit"] = self.range_limit.value()
 
         self.settings["coastal_towns_only"] = self.coastal_towns_only.isChecked()
         self.settings["coastal_threshold_nm"] = self.coastal_threshold_nm.currentText()

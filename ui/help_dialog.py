@@ -355,6 +355,14 @@ track history is kept per vessel, and the recording settings above.
 dark-navy chart palette for a brighter, higher-contrast one for direct
 sunlight — independent of the app's own light/dark theme, which doesn't
 affect the map.
+<b>Range Limit</b> (also under <b>Map</b>, default 60 NM, in steps of 10)
+hides vessels further away than that from both the map and the target
+list, which then reads e.g. "Targets (68 of 107)". Pinned vessels are
+always shown, and until there's a GNSS fix (so no ranges yet) nothing is
+hidden. Set it to <b>Off</b> to show everything. It only affects what's
+displayed — recordings, network broadcast and File Analysis still include
+every vessel. The limit is in your chosen distance unit, and converts if
+you change units.
 </p>
 
 <h3>Keyboard Shortcuts</h3>
