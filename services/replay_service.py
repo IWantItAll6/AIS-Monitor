@@ -1,5 +1,6 @@
 import re
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 
 
 def extract_sentence(line):
@@ -31,6 +32,14 @@ class ReplayService:
         self.start_time = None
         self.current_time = None
 
+        # Wall-clock source for the replay clock below — an attribute rather
+        # than a hard-wired time.monotonic() call so tests can drive it.
+        self.clock = time.monotonic
+
+        # (wall_seconds, log_time) pair the replay clock is measured from —
+        # see anchor_clock(). None until playback's first timestamped batch.
+        self._clock_anchor = None
+
     def load_file(self, filename):
 
         with open(filename, "r", encoding="utf-8", errors="ignore") as f:
@@ -42,6 +51,8 @@ class ReplayService:
 
         self.start_time = None
         self.current_time = None
+
+        self._clock_anchor = None
 
     def has_next(self):
 
@@ -111,13 +122,90 @@ class ReplayService:
         self.start_time = None
         self.current_time = None
 
+        self._clock_anchor = None
+
+    # Replay clock: playback position is measured against wall-clock time
+    # elapsed since an anchor point, not by chaining "wait the gap to the
+    # next line" timers. Chained waits never account for the time spent
+    # processing a batch and repainting in between, so every tick silently
+    # added that overhead on top — on a busy real log, where a map repaint
+    # alone takes a large fraction of the gap between messages, 2x/4x/10x
+    # all collapsed to roughly real time. Measuring against the wall clock
+    # lets the caller catch up by playing every batch that's already due.
+
+    def anchor_clock(self):
+        """Starts the replay clock at current_time, as of now. Called at the
+        start of each play session (after Start/Resume), once the first
+        timestamped batch has been played. No-op if nothing timestamped has
+        been played yet."""
+
+        self._clock_anchor = (self.clock(), self.current_time) if self.current_time else None
+
+    def clear_clock(self):
+
+        self._clock_anchor = None
+
+    def clock_time(self):
+        """The log time playback should have reached by now, or None if the
+        clock isn't running."""
+
+        if self._clock_anchor is None:
+            return None
+
+        wall_start, log_start = self._clock_anchor
+
+        return log_start + timedelta(seconds=(self.clock() - wall_start) * self.speed)
+
+    def next_batch_due(self):
+        """Whether the next queued line's timestamp has already been
+        reached by the replay clock — i.e. playback is behind and should
+        play it now rather than wait. An unparseable timestamp counts as
+        due, matching time_until_next_ms()'s "play immediately" fallback."""
+
+        now = self.clock_time()
+
+        if now is None or not self.has_next():
+            return False
+
+        next_ts = self.extract_timestamp(self.lines[self.index].rstrip())
+
+        return next_ts is None or next_ts <= now
+
+    def ms_until_next_due(self):
+        """Real (speed-scaled) wait until the next queued line is due. Falls
+        back to the plain gap-based wait when the clock isn't running."""
+
+        now = self.clock_time()
+
+        if now is None:
+            return self.interval_ms(self.time_until_next_ms())
+
+        next_ts = self.extract_timestamp(self.lines[self.index].rstrip())
+
+        if next_ts is None:
+            return 1
+
+        return max(1, int((next_ts - now).total_seconds() * 1000 / self.speed))
+
+    def _rebase_clock(self):
+
+        # Re-anchor at the current clock position before a speed change —
+        # otherwise the new speed would apply retroactively to all the wall
+        # time elapsed since the anchor, jumping playback forward/back.
+        now = self.clock_time()
+
+        if now is not None:
+            self._clock_anchor = (self.clock(), now)
+
     def speed_up(self):
 
+        self._rebase_clock()
         self.speed += 1
 
     def slow_down(self):
 
         if self.speed > 1:
+            self._rebase_clock()
             self.speed -= 1
 
     def interval_ms(self, base_interval_ms):

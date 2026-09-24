@@ -31,6 +31,7 @@ from PySide6.QtGui import QIcon, QCursor, QAction, QKeySequence, QActionGroup
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
+import time
 
 from ui.communications_dialog import CommunicationsDialog
 from ui.preferences_dialog import PreferencesDialog
@@ -65,6 +66,12 @@ class MainWindow(QMainWindow):
     # animation takes in wall-clock time when landing on a scrubbed
     # position, regardless of how much simulated time it covers.
     SCRUB_ANIMATION_MS = 2500
+
+    # Longest replay_next_line() keeps catching up on overdue batches in one
+    # timer tick before yielding to the event loop (see there) — bigger
+    # means more throughput at high speeds, smaller means smoother repaints
+    # and snappier input while playback is behind.
+    REPLAY_TICK_BUDGET_S = 0.1
 
     # RSSI graph / Vessel Uptime bar zoom (see adjust_graph_zoom) — a live,
     # session-only view preference, not persisted (same as the map's own
@@ -713,6 +720,11 @@ class MainWindow(QMainWindow):
             self.current_mode = "Replay"
             self.communications_action.setEnabled(True)
 
+            # Wall time spent stopped/paused/seeking mustn't count as elapsed
+            # replay time — replay_next_line() re-anchors the clock on the
+            # first batch it plays from here.
+            self.replay.clear_clock()
+
             if resuming_from_pause:
                 # Pick up the real-time gap to the next batch where it left
                 # off, rather than replaying that batch instantly — an
@@ -923,11 +935,23 @@ class MainWindow(QMainWindow):
 
         self.speed_label.setText(f"{self.replay.speed}x")
 
+        self.reschedule_replay_timer()
+
     def slower_clicked(self):
 
         self.replay.slow_down()
 
         self.speed_label.setText(f"{self.replay.speed}x")
+
+        self.reschedule_replay_timer()
+
+    def reschedule_replay_timer(self):
+
+        # A wait already pending was computed at the old speed — without
+        # this, a speed change mid-playback wouldn't take effect until that
+        # (possibly long, e.g. a quiet gap at 1x) wait finished.
+        if self.replay_timer.isActive() and self.replay.has_next():
+            self.replay_timer.start(self.replay.ms_until_next_due())
 
     def replay_next_line(self):
 
@@ -945,22 +969,37 @@ class MainWindow(QMainWindow):
 
             return
 
-        # A batch, not one line: several sentences sharing the exact same
-        # embedded timestamp (as real receivers do emit) should play back
-        # together, not be spread out one-per-tick.
-        for line in self.replay.next_batch():
-            self.process_sentence(line)
+        tick_started = time.monotonic()
+
+        while True:
+
+            # A batch, not one line: several sentences sharing the exact
+            # same embedded timestamp (as real receivers do emit) should
+            # play back together, not be spread out one-per-tick.
+            for line in self.replay.next_batch():
+                self.process_sentence(line)
+
+            if self.replay.clock_time() is None:
+                self.replay.anchor_clock()
+
+            # Keep playing every batch the replay clock has already passed
+            # (see ReplayService.anchor_clock) — this is what lets 2x/10x
+            # actually run at 2x/10x when processing plus repainting can't
+            # keep up with one batch per timer tick. Capped per tick so a
+            # long catch-up still hands control back to the event loop to
+            # repaint and handle input; the 1ms reschedule below carries on.
+            if not self.replay.next_batch_due():
+                break
+
+            if time.monotonic() - tick_started > self.REPLAY_TICK_BUDGET_S:
+                break
 
         self.replay_scrubber.setValue(self.replay.index)
 
         self.raw_data.verticalScrollBar().setValue(self.raw_data.verticalScrollBar().maximum())
 
         if self.replay.has_next():
-            # Real elapsed time to the next distinct timestamp, scaled by
-            # the current speed multiplier — this is what makes "1x" mean
-            # actual real-time playback instead of a fixed lines-per-second
-            # rate (see ReplayService.time_until_next_ms).
-            self.replay_timer.start(self.replay.interval_ms(self.replay.time_until_next_ms()))
+            self.replay_timer.start(self.replay.ms_until_next_due())
 
         else:
             # Nothing left to time a wait against — let the next tick
