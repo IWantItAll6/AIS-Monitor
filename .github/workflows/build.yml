@@ -38,6 +38,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A tag release takes its description from release-notes/<tag>.md
+      # (see "Attach to release" below) — checked up front, before the
+      # build, so a missing notes file fails fast with a clear message
+      # instead of a release going out with a blank description (as
+      # v1.2.0 did).
+      - name: Check release notes exist
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          notes="release-notes/${{ github.ref_name }}.md"
+          if [ ! -s "$notes" ]; then
+            echo "::error::Missing or empty $notes - add release notes for this tag before releasing."
+            exit 1
+          fi
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -83,3 +98,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.archive }}
+          body_path: release-notes/${{ github.ref_name }}.md
