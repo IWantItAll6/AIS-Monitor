@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QDialog
 from PySide6.QtGui import QPixmap, QIcon
 from PySide6.QtCore import Qt
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 APP_AUTHOR = "Iwan Croose"
 
 
@@ -48,8 +48,9 @@ class AboutDialog(QDialog):
             "A desktop AIS and GNSS monitoring tool — live serial or network receiver\n"
             "input (with optional TCP re-broadcast) or offline log replay, a target list\n"
             "with range/bearing to your own position, an offline coastline map with\n"
-            "vessel plotting, track history and a configurable range limit, per-vessel\n"
-            "RSSI and uptime tracking, and offline file analysis with an estimated\n"
+            "vessel plotting, track history, optional course/speed prediction lines and\n"
+            "a configurable range limit, receiver message statistics, per-vessel RSSI\n"
+            "and uptime tracking, and offline file analysis with an estimated\n"
             "transmission-loss report."
         )
         description.setWordWrap(True)

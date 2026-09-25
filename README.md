@@ -13,9 +13,10 @@ Replay mode, mapping, and the target list are solid and covered by an automated 
 - **Live mode**: reads AIS and GNSS sentences from a serial receiver (configurable port, baud, and data/parity/stop bits) or a network (TCP) AIS source, with an optional separate GNSS port. Can also re-broadcast the combined stream over TCP for other software (e.g. OpenCPN) to consume.
 - **Replay mode**: play back a recorded log at adjustable speed, or scrub to any point in the file with an animated "catch-up" preview of the preceding track history.
 - **Session recording**: live sessions are automatically logged to disk in the same format replay reads, so a recorded session is itself replayable.
-- **Offline coastline map**: pan/zoom map rendered from Natural Earth data (no internet connection or tile server required), with vessel markers, heading-oriented triangles, track history, and a nautical scale bar.
+- **Offline coastline map**: pan/zoom map rendered from Natural Earth data (no internet connection or tile server required), with vessel markers, heading-oriented triangles, track history, and a nautical scale bar. Base stations, Aids to Navigation, SART/MOB/EPIRB beacons and SAR aircraft each get their own marker shape. Optional course/speed prediction lines, a range limit, and a setting to dim or hide stationary vessels and marks.
 - **Target list**: sortable table of tracked vessels with range/bearing to your own position, pinning (survives Clear and sorts to the top), and per-column visibility.
 - **Vessel detail panel**: MMSI, name, callsign, type, position, SOG/COG/heading, nav status, and more — every field is independently toggleable from the View menu.
+- **Message statistics**: messages per minute, stations heard by class, and a per-message-type breakdown, plus optional per-vessel message counts and rates.
 - **RSSI tracking**: signal-strength history graph, with min/avg/max, for compatible receiver hardware.
 - **Vessel uptime**: an Uptime-Kuma-style green/amber/red status strip per vessel, comparing actual transmission timing against the ITU-R M.1371 expected reporting interval for its class and speed.
 - **File analysis**: run statistics — transmission counts, an estimated TX-loss %, RSSI, speed, range, distance traveled — over an entire log file without replaying it, exportable to CSV.
