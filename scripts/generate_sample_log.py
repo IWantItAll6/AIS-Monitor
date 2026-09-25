@@ -74,7 +74,26 @@ VESSELS = [
         "ship_type": 80, "lat": CENTER_LAT - 0.06, "lon": CENTER_LON - 0.04,
         "course": 315.0, "speed": 4.0
     },
+    {
+        # Barely drifting — below the prediction line's default 0.5kn
+        # minimum speed, so Preferences > Map > Below Minimum Speed
+        # (draw/dim/hide) has something to show on.
+        "mmsi": 999000005, "name": "SAMPLE DRIFTER FIVE", "callsign": "ZZ1005",
+        "ship_type": 30, "lat": CENTER_LAT - 0.02, "lon": CENTER_LON - 0.12,
+        "course": 200.0, "speed": 0.3
+    },
 ]
+
+# A SAR aircraft (msg type 9, MMSI prefix 111) flying a steady left-hand
+# search orbit, so its plane marker visibly turns during the replay. It
+# also sends one msg 24 static report with a name — which must not flip
+# it back to a vessel marker (the 111 prefix keeps it classified).
+# ITU-R M.1371: SAR aircraft report every 10s.
+AIRCRAFT = {
+    "mmsi": 111999001, "name": "SAMPLE RESCUE", "lat": CENTER_LAT + 0.04, "lon": CENTER_LON - 0.02,
+    "course": 90.0, "speed": 120.0, "altitude_m": 300, "turn_rate_deg_s": -1.2,
+}
+AIRCRAFT_REPORT_INTERVAL = 10
 
 # Base stations, AtoNs, and SART/MOB/EPIRB beacons are stationary and use
 # their own AIS message types (or, for beacons, reserved MMSI prefixes) —
@@ -245,6 +264,11 @@ def generate():
     }, sentence_type="VDM"):
         emit(sentence, START_TIME)
 
+    for sentence in encode_dict({
+        "type": 24, "mmsi": AIRCRAFT["mmsi"], "partno": 0, "shipname": AIRCRAFT["name"]
+    }, sentence_type="VDM"):
+        emit(sentence, START_TIME)
+
     for vessel in vessels:
 
         for sentence in encode_dict({
@@ -275,6 +299,10 @@ def generate():
 
     for vessel in vessels:
         heap.append((sim_start, next(seq), "vessel_ais", vessel))
+
+    aircraft = dict(AIRCRAFT)
+    aircraft_last_moved = sim_start
+    heap.append((sim_start, next(seq), "aircraft", None))
 
     heapq.heapify(heap)
 
@@ -313,6 +341,29 @@ def generate():
 
             interval = class_a_report_interval(own["speed"])
             heapq.heappush(heap, (time + timedelta(seconds=interval), next(seq), "own_ais", None))
+
+        elif kind == "aircraft":
+
+            # Turning continuously: advance in 1s steps so the orbit stays
+            # round rather than cutting 10s-long chords.
+            elapsed = int((time - aircraft_last_moved).total_seconds())
+
+            for _ in range(elapsed):
+                aircraft["lat"], aircraft["lon"] = move(
+                    aircraft["lat"], aircraft["lon"], aircraft["course"], aircraft["speed"], 1
+                )
+                aircraft["course"] = (aircraft["course"] + aircraft["turn_rate_deg_s"]) % 360
+
+            aircraft_last_moved = time
+
+            for sentence in encode_dict({
+                "type": 9, "mmsi": aircraft["mmsi"], "lat": aircraft["lat"], "lon": aircraft["lon"],
+                "speed": aircraft["speed"], "course": round(aircraft["course"], 1),
+                "alt": aircraft["altitude_m"]
+            }, sentence_type="VDM"):
+                emit(sentence, time)
+
+            heapq.heappush(heap, (time + timedelta(seconds=AIRCRAFT_REPORT_INTERVAL), next(seq), "aircraft", None))
 
         elif kind == "vessel_ais":
 

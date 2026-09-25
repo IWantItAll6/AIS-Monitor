@@ -42,14 +42,14 @@ def test_sample_replay_produces_expected_vessels(sample_result):
 
     window, _ = sample_result
 
-    # 4 fake vessels, a base station, 2 AtoNs, and a SART beacon, plus the
-    # synthetic own-ship AIVDO echo.
-    assert len(window.registry.vessels) == 9
+    # 5 fake vessels, a SAR aircraft, a base station, 2 AtoNs, and a SART
+    # beacon, plus the synthetic own-ship AIVDO echo.
+    assert len(window.registry.vessels) == 11
 
     names = {v.name for v in window.registry.vessels.values() if v.name}
     assert names == {
         "SAMPLE VESSEL ONE", "SAMPLE VESSEL TWO", "SAMPLE TUG THREE", "SAMPLE VESSEL FOUR",
-        "SAMPLE LIGHTHOUSE", "SAMPLE VIRTUAL MARK",
+        "SAMPLE DRIFTER FIVE", "SAMPLE RESCUE", "SAMPLE LIGHTHOUSE", "SAMPLE VIRTUAL MARK",
     }
 
     station_types = {v.mmsi: v.station_type for v in window.registry.vessels.values()}
@@ -57,6 +57,7 @@ def test_sample_replay_produces_expected_vessels(sample_result):
     assert station_types[992320001] == "aton"
     assert station_types[992320002] == "aton"
     assert station_types[970000001] == "sart"
+    assert station_types[111999001] == "sar_aircraft"
     assert window.registry.get(992320002).virtual_aid is True
 
 
@@ -68,6 +69,17 @@ def test_sample_replay_extracts_callsign_and_type(sample_result):
 
     assert vessel.callsign == "ZZ1001"
     assert vessel.type == "Cargo"
+
+
+def test_sample_replay_aircraft_has_speed_and_altitude(sample_result):
+
+    window, _ = sample_result
+
+    aircraft = window.registry.get(111999001)
+
+    assert aircraft.sog == 120
+    assert aircraft.altitude == 300
+    assert aircraft.type == "SAR Aircraft"
 
 
 def test_sample_replay_own_position_resolves(sample_result):
@@ -101,4 +113,4 @@ def test_skip_to_end_processes_the_whole_file_without_error(qapp):
 
     assert not window.replay.has_next()
     assert window.current_mode == "Stopped"
-    assert len(window.registry.vessels) == 9
+    assert len(window.registry.vessels) == 11

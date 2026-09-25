@@ -46,13 +46,13 @@ def sample_analyses():
 
 def test_analyze_file_excludes_own_ship(sample_analyses):
 
-    # 9 total entities appear in the live target list for this same file
-    # (see test_sample_replay.py) — 4 vessels, a base station, 2 AtoNs, a
-    # SART beacon, and the synthetic own-ship AIVDO echo. Own-ship isn't a
+    # 11 total entities appear in the live target list for this same file
+    # (see test_sample_replay.py) — 5 vessels, a SAR aircraft, a base
+    # station, 2 AtoNs, a SART beacon, and the synthetic own-ship AIVDO echo. Own-ship isn't a
     # received target, so it must not appear here.
     OWN_MMSI = 999000000
 
-    assert len(sample_analyses) == 8
+    assert len(sample_analyses) == 10
     assert all(a.mmsi != OWN_MMSI for a in sample_analyses)
 
 
