@@ -74,6 +74,14 @@ class SettingsService:
         # Messages/min appended to the status bar (View menu).
         "show_message_rate": False,
 
+        # Course/speed prediction line ahead of each vessel (Preferences >
+        # Map). Off by default; below the minimum speed the line is drawn
+        # normally, dimmed or hidden per prediction_slow_mode.
+        "prediction_line_enabled": False,
+        "prediction_line_minutes": 10,
+        "prediction_min_speed_kn": 0.5,
+        "prediction_slow_mode": "Hide",
+
         "recordings_folder": "data/recordings",
 
         # Data retention itself is the user's call — we only flag when the

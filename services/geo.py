@@ -1,4 +1,4 @@
-from math import radians, sin, cos, sqrt, atan2, atan, exp, log, tan, degrees, pi, floor, log10
+from math import radians, sin, cos, sqrt, atan2, atan, asin, exp, log, tan, degrees, pi, floor, log10
 
 NM_PER_UNIT = {
     "NM": 1.0,
@@ -130,3 +130,23 @@ def calculate_range_bearing(lat1, lon1, lat2, lon2):
     bearing = (degrees(atan2(y, x)) + 360) % 360
 
     return distance_nm, bearing
+
+
+def destination_point(lat, lon, bearing_deg, distance_nm):
+    """The point distance_nm away from (lat, lon) along an initial great-
+    circle bearing — the inverse of calculate_range_bearing, on the same
+    mean-radius sphere."""
+
+    angular = distance_nm * 1852 / 6371000
+
+    lat1r = radians(lat)
+    lon1r = radians(lon)
+    bearing_r = radians(bearing_deg)
+
+    lat2r = asin(sin(lat1r) * cos(angular) + cos(lat1r) * sin(angular) * cos(bearing_r))
+    lon2r = lon1r + atan2(
+        sin(bearing_r) * sin(angular) * cos(lat1r),
+        cos(angular) - sin(lat1r) * sin(lat2r)
+    )
+
+    return degrees(lat2r), (degrees(lon2r) + 540) % 360 - 180

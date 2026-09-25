@@ -274,7 +274,8 @@ there's a GNSS fix.
 Vessels are drawn as a triangle pointing in their heading (or course over
 ground, if heading isn't reported) when known, or a plain dot otherwise.
 A trailing line shows each vessel's recent track — how far back it goes is
-set by <b>Preferences &gt; Track Length</b>.
+set by <b>Preferences &gt; Track Length</b>. An optional dashed line ahead of
+each vessel predicts where it's heading (see <b>Settings</b> below).
 </p>
 <p>
 Other AIS station types use their own marker shape rather than the vessel
@@ -399,6 +400,19 @@ hidden. Set it to <b>Off</b> to show everything. It only affects what's
 displayed — recordings, network broadcast and File Analysis still include
 every vessel. The limit is in your chosen distance unit, and converts if
 you change units.
+</p>
+<p>
+<b>Show course/speed prediction line</b> (also under <b>Map</b>, off by
+default) draws a <b>dashed</b> line ahead of each moving vessel, ending in
+a small circle at where it will be after <b>Prediction Length</b> minutes
+(default 10) at its current speed and course over ground. It's dashed and
+thinner so it can't be mistaken for the solid track trailing behind.
+Vessels slower than <b>Prediction Minimum Speed</b> (default 0.5 kn), whose
+speed and course are mostly GPS noise, are handled by <b>Below Minimum
+Speed</b>: drawn normally, dimmed, or hidden (the default). Base stations and
+Aids to Navigation never get one. While the line is on, vessel labels move
+to the side of the vessel instead of ahead of it, so they don't sit on
+their own line.
 </p>
 
 <h3>Keyboard Shortcuts</h3>

@@ -8,6 +8,9 @@ from services.coastline_service import CoastlineService
 from services.places_service import PlacesService
 from services.uk_towns_service import UkTownsService
 from services.shore_distance_service import annotate_shore_distances, FAR_SENTINEL_NM as FAR_SHORE_DISTANCE_NM
+from services.prediction_line import (
+    prediction_line_style, prediction_end_point, STYLE_DIM, SLOW_MODE_HIDE
+)
 from services.geo import (
     NM_PER_UNIT, UNIT_SUFFIX, mercator_y, inverse_mercator_y, nice_scale_value, MAX_MERCATOR_LATITUDE
 )
@@ -146,6 +149,15 @@ class MapPanel(QWidget):
     # first but read as washed-out/low-contrast against the map.)
     PINNED_SAFETY_MARK_COLOR = QColor(255, 0, 144)
 
+    # Course/speed prediction line: dashed and thinner than the solid
+    # 2px history trail, ending in a small open circle, so it reads as
+    # "where it's going" rather than more track. Dimmed lines (slow
+    # vessels, when that's the chosen mode) drop to a much lower alpha.
+    PREDICTION_LINE_WIDTH = 1.5
+    PREDICTION_ALPHA = 230
+    PREDICTION_DIM_ALPHA = 80
+    PREDICTION_END_RADIUS = 2.5
+
     # Candidate label placements tried, in order, around each vessel marker
     # before giving up and suppressing the label (widest angle spread first
     # at the tightest radius, then step out to a wider radius).
@@ -215,6 +227,11 @@ class MapPanel(QWidget):
         self.pinned_color = QColor(self.DEFAULT_PINNED_COLOR)
 
         self.daylight_mode = False
+
+        self.prediction_enabled = False
+        self.prediction_minutes = 10
+        self.prediction_min_speed_kn = 0.5
+        self.prediction_slow_mode = SLOW_MODE_HIDE
 
         # Last successful (radius, angle) per vessel MMSI — tried first each
         # frame before searching fresh, so a label's screen position stays
@@ -373,6 +390,15 @@ class MapPanel(QWidget):
             # deliberately unaffected, so its legend stays consistent
             # regardless of the live map's mode.
             setattr(self, name, color if enabled else getattr(type(self), name))
+
+        self.update()
+
+    def set_prediction_line(self, enabled, minutes, min_speed_kn, slow_mode):
+
+        self.prediction_enabled = enabled
+        self.prediction_minutes = minutes
+        self.prediction_min_speed_kn = min_speed_kn
+        self.prediction_slow_mode = slow_mode
 
         self.update()
 
@@ -790,6 +816,8 @@ class MapPanel(QWidget):
 
                 painter.drawPolyline(polyline)
 
+        predicted_mmsis = self.draw_prediction_lines(painter, visible) if self.prediction_enabled else set()
+
         # Closer vessels claim label space first — they're the ones actually
         # relevant to the operator, unlike distant AIS contacts.
         visible.sort(key=lambda v: v.range if v.range is not None else float("inf"))
@@ -908,6 +936,11 @@ class MapPanel(QWidget):
             # any vessel heading roughly in that same fixed direction.
             preferred_angle = orientation if orientation is not None else 135
 
+            # ...unless a prediction line now occupies the space ahead —
+            # then start beside it (starboard of its course) instead.
+            if vessel.mmsi in predicted_mmsis:
+                preferred_angle = vessel.cog + 90
+
             # When the preferred spot is already taken, try nudging the
             # label around the marker (widening angle, then radius) instead
             # of just suppressing it — lets close-together vessels each
@@ -973,6 +1006,39 @@ class MapPanel(QWidget):
                 painter.rotate(own_cog)
                 painter.drawPolygon(self.VESSEL_TRIANGLE)
                 painter.restore()
+
+    def draw_prediction_lines(self, painter, vessels):
+        """Returns the MMSIs a line was drawn for, so label placement can
+        keep clear of them."""
+
+        drawn = set()
+
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        for vessel in vessels:
+
+            style = prediction_line_style(vessel, self.prediction_min_speed_kn, self.prediction_slow_mode)
+
+            if style is None:
+                continue
+
+            end_lat, end_lon = prediction_end_point(vessel, self.prediction_minutes)
+
+            color = QColor(self._marker_color(vessel))
+            color.setAlpha(self.PREDICTION_DIM_ALPHA if style == STYLE_DIM else self.PREDICTION_ALPHA)
+
+            start = self.project(vessel.lat, vessel.lon)
+            end = self.project(end_lat, end_lon)
+
+            painter.setPen(QPen(color, self.PREDICTION_LINE_WIDTH, Qt.PenStyle.DashLine))
+            painter.drawLine(start, end)
+
+            painter.setPen(QPen(color, self.PREDICTION_LINE_WIDTH))
+            painter.drawEllipse(end, self.PREDICTION_END_RADIUS, self.PREDICTION_END_RADIUS)
+
+            drawn.add(vessel.mmsi)
+
+        return drawn
 
     def wheelEvent(self, event):
 

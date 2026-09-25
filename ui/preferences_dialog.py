@@ -11,12 +11,14 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QColorDialog,
-    QSpinBox
+    QSpinBox,
+    QDoubleSpinBox
 )
 from PySide6.QtGui import QColor
 
 from services.geo import UNIT_SUFFIX
 from services.range_limit import convert_range_limit
+from services.prediction_line import SLOW_MODES
 
 
 class PreferencesDialog(QDialog):
@@ -149,6 +151,39 @@ class PreferencesDialog(QDialog):
 
         map_form.addRow("Coastal Threshold (nm)", self.coastal_threshold_nm)
 
+        self.prediction_line_enabled = QCheckBox("Show course/speed prediction line")
+        self.prediction_line_enabled.setToolTip(
+            "A dashed line ahead of each moving vessel, showing where it will be "
+            "after the set time at its current speed and course."
+        )
+        self.prediction_line_enabled.toggled.connect(self.update_prediction_controls_enabled)
+
+        map_form.addRow(self.prediction_line_enabled)
+
+        self.prediction_line_minutes = QSpinBox()
+        self.prediction_line_minutes.setRange(1, 60)
+        self.prediction_line_minutes.setSuffix(" min")
+
+        map_form.addRow("Prediction Length", self.prediction_line_minutes)
+
+        self.prediction_min_speed = QDoubleSpinBox()
+        self.prediction_min_speed.setRange(0, 20)
+        self.prediction_min_speed.setSingleStep(0.5)
+        self.prediction_min_speed.setDecimals(1)
+        self.prediction_min_speed.setSuffix(" kn")
+        self.prediction_min_speed.setToolTip(
+            "Vessels slower than this are treated as stationary — their speed "
+            "and course are mostly GPS noise."
+        )
+
+        map_form.addRow("Prediction Minimum Speed", self.prediction_min_speed)
+
+        # Display labels for the stored SLOW_MODES values, same order.
+        self.prediction_slow_mode = QComboBox()
+        self.prediction_slow_mode.addItems(["Draw normally", "Dim", "Hide"])
+
+        map_form.addRow("Below Minimum Speed", self.prediction_slow_mode)
+
         layout.addLayout(map_form)
 
         layout.addSpacing(10)
@@ -262,6 +297,11 @@ class PreferencesDialog(QDialog):
         self._range_limit_unit = unit
         self.update_range_limit_suffix()
 
+    def update_prediction_controls_enabled(self, enabled):
+
+        for widget in (self.prediction_line_minutes, self.prediction_min_speed, self.prediction_slow_mode):
+            widget.setEnabled(enabled)
+
     def update_range_limit_suffix(self):
 
         self.range_limit.setSuffix(f" {UNIT_SUFFIX.get(self._range_limit_unit, self._range_limit_unit)}")
@@ -284,6 +324,15 @@ class PreferencesDialog(QDialog):
         self.coastal_threshold_nm.setEnabled(self.settings["coastal_towns_only"])
 
         self.map_daylight_mode.setChecked(self.settings.get("map_daylight_mode", False))
+
+        self.prediction_line_enabled.setChecked(self.settings.get("prediction_line_enabled", False))
+        self.prediction_line_minutes.setValue(int(self.settings.get("prediction_line_minutes", 10)))
+        self.prediction_min_speed.setValue(float(self.settings.get("prediction_min_speed_kn", 0.5)))
+
+        slow_mode = self.settings.get("prediction_slow_mode", "Hide")
+        self.prediction_slow_mode.setCurrentIndex(SLOW_MODES.index(slow_mode) if slow_mode in SLOW_MODES else 2)
+
+        self.update_prediction_controls_enabled(self.prediction_line_enabled.isChecked())
 
         self.vessel_color = self.settings["vessel_color"]
         self.set_swatch(self.vessel_color_button, self.vessel_color)
@@ -308,6 +357,11 @@ class PreferencesDialog(QDialog):
         self.settings["coastal_threshold_nm"] = self.coastal_threshold_nm.currentText()
 
         self.settings["map_daylight_mode"] = self.map_daylight_mode.isChecked()
+
+        self.settings["prediction_line_enabled"] = self.prediction_line_enabled.isChecked()
+        self.settings["prediction_line_minutes"] = self.prediction_line_minutes.value()
+        self.settings["prediction_min_speed_kn"] = self.prediction_min_speed.value()
+        self.settings["prediction_slow_mode"] = SLOW_MODES[self.prediction_slow_mode.currentIndex()]
 
         self.settings["vessel_color"] = self.vessel_color
         self.settings["pinned_color"] = self.pinned_color
