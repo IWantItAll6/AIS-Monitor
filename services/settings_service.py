@@ -71,6 +71,9 @@ class SettingsService:
         "last_replay_folder": "",
         "show_stale_targets": False,
 
+        # Messages/min appended to the status bar (View menu).
+        "show_message_rate": False,
+
         "recordings_folder": "data/recordings",
 
         # Data retention itself is the user's call — we only flag when the
@@ -86,7 +89,9 @@ class SettingsService:
             "Range": True,
             "Bearing": True,
             "RSSI": False,
-            "Seen": True
+            "Seen": True,
+            "Msgs": False,
+            "Msg/min": False
         },
 
         # Every field in the details panel is independently toggleable
@@ -112,7 +117,10 @@ class SettingsService:
             "IMO": False,
             "Rate of Turn": False,
             "Length": False,
-            "Beam": False
+            "Beam": False,
+            "Altitude": False,
+            "Messages": False,
+            "Message Rate": False
         }
     }
 

@@ -242,6 +242,26 @@ whole file.
 current target list, to a file.
 </p>
 
+<h3>Message Statistics</h3>
+<p>
+<b>View &gt; Message Statistics...</b> opens a window (it can stay open
+beside the map) showing how many AIS messages have been received, the
+current rate in messages per minute, how many Class A, Class B, base
+station, SAR aircraft and AtoN stations have been heard, and a breakdown
+by message type. A falling rate is an easy way to spot a receiver or
+antenna going quiet — <b>View &gt; Show Message Rate in Status Bar</b>
+keeps the rate visible at all times. During replay, rates are measured
+against the file's own timestamps, so they show what was received at the
+time rather than the playback speed. Counts cover the session since it
+was last cleared (or since the replay was scrubbed).
+</p>
+<p>
+Per vessel, the optional <b>Msgs</b> and <b>Msg/min</b> columns
+(<b>View &gt; Select Columns</b>) and the <b>Messages</b> and <b>Message
+Rate</b> detail fields show how many messages that vessel has sent and its
+rate over the last 5 minutes.
+</p>
+
 <h3>The Map</h3>
 <p>
 Drag to pan, scroll to zoom. The scale bar in the bottom-left shows the

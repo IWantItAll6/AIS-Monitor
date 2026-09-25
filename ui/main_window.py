@@ -40,11 +40,13 @@ from ui.preferences_dialog import PreferencesDialog
 from ui.help_dialog import HelpDialog
 from ui.about_dialog import AboutDialog
 from ui.error_log_dialog import ErrorLogDialog
+from ui.message_stats_dialog import MessageStatsDialog, format_rate
 from ui.file_analysis_dialog import FileAnalysisDialog
 from services.file_analysis_service import FileAnalysisThread, extract_rssi_history
 from services.error_log import ErrorLog
 from services.settings_service import SettingsService
 from services.vessel_registry import VesselRegistry
+from services.message_stats import MessageStatistics
 from parsers.ais_parser import AISParser
 from parsers.gnss_parser import GNSSParser
 from parsers.psmt_parser import PSMTParser
@@ -139,6 +141,9 @@ class MainWindow(QMainWindow):
         }
 
         self.registry = VesselRegistry()
+
+        self.message_stats = MessageStatistics()
+        self.message_stats_dialog = None
 
         self.own_track = deque()
 
@@ -334,7 +339,7 @@ class MainWindow(QMainWindow):
 
         self.target_tree = QTreeWidget()
         self.tree_items = {}
-        self.target_tree.setHeaderLabels(["★", "MMSI", "Name", "Range", "Bearing", "RSSI", "Seen"])
+        self.target_tree.setHeaderLabels(["★", "MMSI", "Name", "Range", "Bearing", "RSSI", "Seen", "Msgs", "Msg/min"])
 
         self.target_tree.setColumnWidth(0, 25)  # Star
         self.target_tree.setColumnWidth(1, 95)  # MMSI
@@ -342,6 +347,8 @@ class MainWindow(QMainWindow):
         self.target_tree.setColumnWidth(4, 65)  # Bearing
         self.target_tree.setColumnWidth(5, 55)  # RSSI
         self.target_tree.setColumnWidth(6, 55)  # Seen
+        self.target_tree.setColumnWidth(7, 55)  # Msgs
+        self.target_tree.setColumnWidth(8, 65)  # Msg/min
 
         from PySide6.QtWidgets import QHeaderView
 
@@ -381,6 +388,8 @@ class MainWindow(QMainWindow):
         self.detail_length = QLabel("-")
         self.detail_beam = QLabel("-")
         self.detail_altitude = QLabel("-")
+        self.detail_messages = QLabel("-")
+        self.detail_message_rate = QLabel("-")
 
         title = QLabel("Selected Vessel")
         font = title.font()
@@ -416,6 +425,8 @@ class MainWindow(QMainWindow):
             ("Length", "Length:", self.detail_length, False),
             ("Beam", "Beam:", self.detail_beam, False),
             ("Altitude", "Altitude:", self.detail_altitude, False),
+            ("Messages", "Messages:", self.detail_messages, False),
+            ("Message Rate", "Msg Rate:", self.detail_message_rate, False),
         ]
 
         self.detail_field_captions = {}
@@ -1091,6 +1102,10 @@ class MainWindow(QMainWindow):
             if vessel:
                 self.last_ais_mmsi = vessel.mmsi
 
+                message_time = self.replay.current_time or datetime.now()
+                self.message_stats.record(message_time, self.ais_parser.last_msg_type, vessel.mmsi)
+                vessel.message_counter.record(message_time)
+
                 if self.replay.current_time is not None:
                     vessel.uptime_tracker.record_report(
                         self.replay.current_time,
@@ -1278,7 +1293,7 @@ class MainWindow(QMainWindow):
                 item = self.tree_items[mmsi]
 
             else:
-                item = VesselTreeItem(["", "", "", "", "", "", ""])
+                item = VesselTreeItem([""] * 9)
                 self.target_tree.addTopLevelItem(item)
                 self.tree_items[mmsi] = item
 
@@ -1289,6 +1304,11 @@ class MainWindow(QMainWindow):
             item.setText(4, bearing_text)
             item.setText(5, str(vessel.rssi) if vessel.rssi is not None else "")
             item.setText(6, seen_text)
+
+            message_rate = vessel.message_counter.rate_per_minute(self.replay.current_time or datetime.now())
+
+            item.setText(7, str(vessel.message_counter.count))
+            item.setText(8, "" if message_rate is None else f"{message_rate:.1f}")
 
             # Pinned sort (see VesselTreeItem.__lt__ — always floats to top)
             item.setData(0, Qt.ItemDataRole.UserRole, vessel.pinned)
@@ -1304,6 +1324,9 @@ class MainWindow(QMainWindow):
 
             # RSSI sort
             item.setData(5, Qt.ItemDataRole.UserRole, vessel.rssi if vessel.rssi is not None else -999)
+
+            item.setData(7, Qt.ItemDataRole.UserRole, vessel.message_counter.count)
+            item.setData(8, Qt.ItemDataRole.UserRole, message_rate if message_rate is not None else -1)
 
             # Seen sort — only meaningful when replay supplies a time
             # reference; live mode has none (see format_seen for the same gate).
@@ -1376,6 +1399,10 @@ class MainWindow(QMainWindow):
             f"Targets: {len(self.registry.vessels)} | "
             f"Logging: {logging_status}"
         )
+
+        if self.settings.get("show_message_rate"):
+            rate = self.message_stats.rate_per_minute(self.replay.current_time or datetime.now())
+            message += f" | Messages: {format_rate(rate)}"
 
         if self.settings.get("broadcast_enabled"):
             message += f" | Broadcast: {self.broadcast_client_count} client(s)"
@@ -1557,9 +1584,17 @@ class MainWindow(QMainWindow):
         self.show_vessel_uptime_action.toggled.connect(self.uptime_toggle.setChecked)
         self.uptime_toggle.toggled.connect(self.show_vessel_uptime_action.setChecked)
 
+        self.message_stats_action = view_menu.addAction("Message Statistics...")
+        self.message_stats_action.triggered.connect(self.show_message_stats)
+
+        self.show_message_rate_action = view_menu.addAction("Show Message Rate in Status Bar")
+        self.show_message_rate_action.setCheckable(True)
+        self.show_message_rate_action.setChecked(self.settings.get("show_message_rate", False))
+        self.show_message_rate_action.toggled.connect(self.set_show_message_rate)
+
         columns_menu = view_menu.addMenu("Select Columns")
 
-        column_names = ["Pinned", "MMSI", "Name", "Range", "Bearing", "RSSI", "Seen"]
+        column_names = ["Pinned", "MMSI", "Name", "Range", "Bearing", "RSSI", "Seen", "Msgs", "Msg/min"]
 
         visible_columns = self.settings.get("visible_columns", {})
 
@@ -1726,6 +1761,28 @@ class MainWindow(QMainWindow):
         apply_title_bar_theme(dialog, self.settings["theme"])
         dialog.exec()
 
+    def show_message_stats(self):
+
+        # Non-modal and kept around, so it can stay open beside the map
+        # while the session runs; reopening just brings it back to front.
+        if self.message_stats_dialog is None:
+            self.message_stats_dialog = MessageStatsDialog(
+                self.message_stats, lambda: self.replay.current_time or datetime.now(), self
+            )
+            apply_title_bar_theme(self.message_stats_dialog, self.settings["theme"])
+
+        self.message_stats_dialog.show()
+        self.message_stats_dialog.raise_()
+        self.message_stats_dialog.activateWindow()
+
+    def set_show_message_rate(self, show):
+
+        self.settings["show_message_rate"] = show
+
+        SettingsService.save(self.settings)
+
+        self.update_status()
+
     def show_error_log(self):
 
         dialog = ErrorLogDialog(self.error_log)
@@ -1780,7 +1837,7 @@ class MainWindow(QMainWindow):
                 "Nav Status", f"Range ({unit})", "Bearing (deg)", "RSSI",
                 "Last Seen",
                 "Destination", "Draught (m)", "IMO", "Rate of Turn (deg/min)",
-                "Length (m)", "Beam (m)", "Altitude (m)"
+                "Length (m)", "Beam (m)", "Altitude (m)", "Messages"
             ])
 
             for vessel in self.registry.all():
@@ -1807,7 +1864,8 @@ class MainWindow(QMainWindow):
                     vessel.rot if vessel.rot is not None else "",
                     vessel.length if vessel.length is not None else "",
                     vessel.beam if vessel.beam is not None else "",
-                    vessel.altitude if vessel.altitude is not None else ""
+                    vessel.altitude if vessel.altitude is not None else "",
+                    vessel.message_counter.count
                 ])
 
         self.status_bar.showMessage(f"Target list exported to {filename}", 5000)
@@ -2449,6 +2507,10 @@ class MainWindow(QMainWindow):
         self.detail_length.setText("-" if vessel.length is None else f"{vessel.length} m")
         self.detail_beam.setText("-" if vessel.beam is None else f"{vessel.beam} m")
         self.detail_altitude.setText("-" if vessel.altitude is None else f"{vessel.altitude} m")
+        self.detail_messages.setText(str(vessel.message_counter.count))
+        self.detail_message_rate.setText(
+            format_rate(vessel.message_counter.rate_per_minute(self.replay.current_time or datetime.now()))
+        )
 
         window_start = (
             self.graph_window_start(self.replay.current_time) if self.replay.current_time is not None else None
@@ -2615,6 +2677,8 @@ class MainWindow(QMainWindow):
 
         self.last_ais_mmsi = None
         self.own_track = deque()
+
+        self.message_stats.reset()
         self.own_mmsi = None
 
         # A fresh dict, not a mutation — self.own_position may still be the
@@ -2658,6 +2722,8 @@ class MainWindow(QMainWindow):
         self.detail_length.setText("-")
         self.detail_beam.setText("-")
         self.detail_altitude.setText("-")
+        self.detail_messages.setText("-")
+        self.detail_message_rate.setText("-")
 
         self.rssi_graph.clear()
         self.rssi_stats_label.setText("")

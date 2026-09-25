@@ -3,6 +3,7 @@ from datetime import datetime
 from collections import deque
 
 from services.vessel_uptime import VesselUptimeTracker
+from services.message_stats import MessageCounter, VESSEL_RATE_WINDOW_SECONDS
 
 
 @dataclass
@@ -33,6 +34,12 @@ class Vessel:
     rssi_history: deque = field(default_factory=deque)
 
     uptime_tracker: VesselUptimeTracker = field(default_factory=VesselUptimeTracker)
+
+    # Every decoded message received from this MMSI (any type) — for the
+    # optional Messages / Msg Rate fields and Msgs / Msg/min columns.
+    message_counter: MessageCounter = field(
+        default_factory=lambda: MessageCounter(VESSEL_RATE_WINDOW_SECONDS)
+    )
 
     last_seen: datetime = field(default_factory=datetime.now)
     track: deque = field(default_factory=deque)
