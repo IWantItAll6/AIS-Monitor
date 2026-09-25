@@ -124,6 +124,17 @@ class MapPanel(QWidget):
     # for an Aid to Navigation (the IALA convention), and a cross-in-circle
     # distress mark shared by SART/MOB/EPIRB safety beacons.
     BASE_STATION_HALF_SIZE = 5
+
+    # SAR aircraft (msg type 9) — a plane silhouette, nose up before
+    # rotation like VESSEL_TRIANGLE, as OpenCPN does. Message 9 has no
+    # heading field, so it's rotated by COG only.
+    SAR_AIRCRAFT_ICON = QPolygonF([
+        QPointF(0, -8), QPointF(1.2, -6), QPointF(1.2, -2), QPointF(8, 1.5),
+        QPointF(8, 3), QPointF(1.2, 1.5), QPointF(1.2, 5), QPointF(3.5, 6.8),
+        QPointF(3.5, 8), QPointF(0, 7), QPointF(-3.5, 8), QPointF(-3.5, 6.8),
+        QPointF(-1.2, 5), QPointF(-1.2, 1.5), QPointF(-8, 3), QPointF(-8, 1.5),
+        QPointF(-1.2, -2), QPointF(-1.2, -6),
+    ])
     ATON_HALF_SIZE = 6
     SAFETY_MARK_RADIUS = 6
     SAFETY_MARK_COLOR = QColor(255, 60, 60)
@@ -830,6 +841,17 @@ class MapPanel(QWidget):
                 painter.setBrush(vessel_color)
                 half = self.BASE_STATION_HALF_SIZE
                 painter.drawRect(QRectF(point.x() - half, point.y() - half, half * 2, half * 2))
+
+            elif vessel.station_type == "sar_aircraft":
+                # Drawn nose-up when COG is unknown rather than falling back
+                # to a dot — the plane shape matters more than the direction.
+                painter.setPen(QPen(vessel_color, 1))
+                painter.setBrush(vessel_color)
+                painter.save()
+                painter.translate(point)
+                painter.rotate(vessel.cog or 0)
+                painter.drawPolygon(self.SAR_AIRCRAFT_ICON)
+                painter.restore()
 
             elif vessel.station_type == "aton":
                 half = self.ATON_HALF_SIZE

@@ -30,6 +30,10 @@
 
 CLASS_A_MSG_TYPES = (1, 2, 3)
 CLASS_B_MSG_TYPES = (18, 19)
+SAR_AIRCRAFT_MSG_TYPES = (9,)
+
+# ITU-R M.1371 Table 4: SAR aircraft report every 10s regardless of speed.
+SAR_AIRCRAFT_INTERVAL_SECONDS = 10
 
 
 CLASS_A_ANCHORED_NAV_STATUSES = ("AtAnchor", "Moored")
@@ -138,5 +142,8 @@ def expected_interval_seconds(msg_type, cs_flag, speed_kn, nav_status=None, sust
 
     if msg_type == 19:
         return class_b_cs_interval_seconds(speed_kn)
+
+    if msg_type in SAR_AIRCRAFT_MSG_TYPES:
+        return SAR_AIRCRAFT_INTERVAL_SECONDS
 
     return None

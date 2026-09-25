@@ -18,6 +18,10 @@ def enum_label(value):
 # types 1-3) — there's no dedicated message type for them, so they're only
 # identifiable by these reserved MMSI prefixes.
 MMSI_PREFIX_STATION_TYPES = {
+    # SAR aircraft MMSIs are 111MIDxxx (ITU-R M.585). Checked as well as
+    # msg type 9 so an aircraft that also sends static data (msg 5/24)
+    # doesn't flip back to a vessel marker on every static report.
+    "111": "sar_aircraft",
     "970": "sart",
     "972": "mob",
     "974": "epirb",
@@ -25,6 +29,7 @@ MMSI_PREFIX_STATION_TYPES = {
 
 STATION_TYPE_LABELS = {
     "base_station": "Base Station",
+    "sar_aircraft": "SAR Aircraft",
     "sart": "SART",
     "mob": "MOB",
     "epirb": "EPIRB",
@@ -32,12 +37,15 @@ STATION_TYPE_LABELS = {
 
 
 def classify_station(mmsi, msg_type):
-    """Base stations and Aids to Navigation declare their category via
-    msg_type (4 and 21 respectively); everything else is either a normal
-    vessel or a safety beacon identifiable only by MMSI prefix."""
+    """Base stations, SAR aircraft and Aids to Navigation declare their
+    category via msg_type (4, 9 and 21 respectively); everything else is
+    either a normal vessel or a station identifiable only by MMSI prefix."""
 
     if msg_type == 4:
         return "base_station"
+
+    if msg_type == 9:
+        return "sar_aircraft"
 
     if msg_type == 21:
         return "aton"
@@ -206,8 +214,17 @@ class AISParser:
 
             # AIS reserves specific values to mean "not available" rather than
             # a real reading — pyais decodes them as-is, so filter here.
+            # Message 9 (SAR aircraft) reports speed in whole knots up to
+            # 1022, with 1023 as "not available" — Class A/B's 102.3
+            # deciknot sentinel would throw away every real aircraft speed.
             if hasattr(msg, "speed"):
-                vessel.sog = msg.speed if msg.speed < 102.3 else None
+                speed_not_available = 1023 if self.last_msg_type == 9 else 102.3
+                vessel.sog = msg.speed if msg.speed < speed_not_available else None
+
+            # Message 9 altitude in metres; 4095 = not available (4094
+            # means "4094 m or higher", shown as-is).
+            if hasattr(msg, "alt"):
+                vessel.altitude = msg.alt if msg.alt != 4095 else None
 
             if hasattr(msg, "course"):
                 vessel.cog = msg.course if msg.course < 360 else None

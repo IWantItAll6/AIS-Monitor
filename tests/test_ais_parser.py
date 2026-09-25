@@ -302,3 +302,66 @@ def test_decode_failure_without_error_log_does_not_raise(monkeypatch):
     parser = make_parser()
 
     assert parser.process("!AIVDM,1,1,,,garbage,0*00", None) is None
+
+
+def encode_msg_9(**fields):
+
+    # No real message 9 in any local log yet, so these are built with
+    # pyais's own encoder — still real, decodable AIS sentences rather
+    # than a monkeypatched decode(), so the real decoder's field types and
+    # scaling are exercised too.
+    from pyais.encode import encode_dict
+
+    msg = {"type": 9, "mmsi": 111232511, "lat": 50.5, "lon": -2.3, "course": 90.5, "alt": 303, "speed": 245}
+    msg.update(fields)
+
+    return encode_dict(msg, talker_id="AI", sentence_type="VDM")[0]
+
+
+def test_msg_type_9_classified_as_sar_aircraft_with_altitude():
+
+    parser = make_parser()
+
+    vessel = parser.process(encode_msg_9(), None)
+
+    assert vessel.station_type == "sar_aircraft"
+    assert vessel.type == "SAR Aircraft"
+    assert vessel.altitude == 303
+    assert vessel.cog == 90.5
+    assert (vessel.lat, vessel.lon) == (50.5, -2.3)
+
+
+def test_msg_type_9_speed_above_class_a_sentinel_is_kept():
+
+    # Message 9 speed is whole knots up to 1022 — the Class A/B 102.3
+    # "not available" sentinel used to discard every real aircraft speed.
+    parser = make_parser()
+
+    vessel = parser.process(encode_msg_9(speed=245), None)
+
+    assert vessel.sog == 245
+
+
+def test_msg_type_9_not_available_speed_and_altitude_filtered_to_none():
+
+    parser = make_parser()
+
+    vessel = parser.process(encode_msg_9(speed=1023, alt=4095), None)
+
+    assert vessel.sog is None
+    assert vessel.altitude is None
+
+
+def test_sar_aircraft_mmsi_prefix_survives_a_static_data_report(monkeypatch):
+
+    # An aircraft's own static report (msg 24 here) must not flip it back
+    # to a vessel marker — the 111 MMSI prefix keeps it classified.
+    parser = make_parser()
+
+    fake_msg = SimpleNamespace(mmsi=111232511, msg_type=24, shipname="RESCUE 106")
+    monkeypatch.setattr(ais_parser_module, "decode", lambda *a: fake_msg)
+
+    vessel = parser.process("!AIVDM,1,1,,,dummy,0*00", None)
+
+    assert vessel.station_type == "sar_aircraft"
+    assert vessel.name == "RESCUE 106"

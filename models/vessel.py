@@ -15,7 +15,8 @@ class Vessel:
 
     # "vessel" (the default — a normal AIS Class A/B ship) vs. the other
     # station kinds AIS also carries on the same channel: "base_station"
-    # (msg type 4), "aton" (msg type 21, an Aid to Navigation), or a
+    # (msg type 4), "sar_aircraft" (msg type 9, or a 111 MMSI prefix),
+    # "aton" (msg type 21, an Aid to Navigation), or a
     # SART/MOB/EPIRB safety beacon (identified by reserved MMSI prefix,
     # since those transmit ordinary Class A position reports).
     station_type: str = "vessel"
@@ -48,6 +49,9 @@ class Vessel:
     imo: int | None = None
     length: int | None = None
     beam: int | None = None
+
+    # Metres, SAR aircraft (msg type 9) only.
+    altitude: int | None = None
 
     # Computed fresh each time update_target_tree() runs, not from AIS data.
     range: float | None = None

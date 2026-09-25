@@ -11,10 +11,11 @@ from services.vessel_registry import VesselRegistry
 from services.replay_service import ReplayService, extract_sentence
 from services.geo import calculate_range_bearing
 from services.ais_reporting_intervals import (
-    expected_interval_seconds, update_low_speed_streak, CLASS_A_MSG_TYPES, CLASS_B_MSG_TYPES
+    expected_interval_seconds, update_low_speed_streak, CLASS_A_MSG_TYPES, CLASS_B_MSG_TYPES,
+    SAR_AIRCRAFT_MSG_TYPES,
 )
 
-POSITION_REPORT_MSG_TYPES = CLASS_A_MSG_TYPES + CLASS_B_MSG_TYPES
+POSITION_REPORT_MSG_TYPES = CLASS_A_MSG_TYPES + CLASS_B_MSG_TYPES + SAR_AIRCRAFT_MSG_TYPES
 
 
 @dataclass

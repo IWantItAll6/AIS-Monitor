@@ -91,6 +91,12 @@ def test_sustained_low_speed_is_a_class_a_only_concept():
     assert expected_interval_seconds(18, True, 10, None, True) == 30  # unaffected either way
 
 
+@pytest.mark.parametrize("speed_kn", [None, 0, 120, 400])
+def test_sar_aircraft_reports_every_ten_seconds_at_any_speed(speed_kn):
+
+    assert expected_interval_seconds(9, None, speed_kn) == 10
+
+
 @pytest.mark.parametrize("msg_type", [4, 5, 21, 24, 999])
 def test_unmodeled_message_types_return_none(msg_type):
 

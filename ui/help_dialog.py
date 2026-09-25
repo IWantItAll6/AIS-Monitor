@@ -13,6 +13,7 @@ LEGEND_ENTRIES = [
     ("vessel_no_heading", "Vessel — heading/COG unknown"),
     ("pinned", "Pinned vessel"),
     ("base_station", "Base station"),
+    ("sar_aircraft", "SAR aircraft"),
     ("aton", "Aid to Navigation"),
     ("aton_virtual", "Aid to Navigation — virtual"),
     ("safety", "SART / MOB / EPIRB beacon"),
@@ -63,6 +64,14 @@ def _draw_legend_icon(painter, kind, center):
         painter.setBrush(vessel_color)
         half = MapPanel.BASE_STATION_HALF_SIZE
         painter.drawRect(QRectF(center.x() - half, center.y() - half, half * 2, half * 2))
+
+    elif kind == "sar_aircraft":
+        painter.setPen(QPen(vessel_color, 1))
+        painter.setBrush(vessel_color)
+        painter.save()
+        painter.translate(center)
+        painter.drawPolygon(MapPanel.SAR_AIRCRAFT_ICON)
+        painter.restore()
 
     elif kind in ("aton", "aton_virtual"):
         half = MapPanel.ATON_HALF_SIZE
@@ -249,10 +258,13 @@ set by <b>Preferences &gt; Track Length</b>.
 </p>
 <p>
 Other AIS station types use their own marker shape rather than the vessel
-triangle: a <b>square</b> is a base station, a <b>diamond</b> is an Aid to
+triangle: a <b>square</b> is a base station, a <b>plane</b> is a search
+and rescue (SAR) aircraft (pointing along its course; its altitude can be
+shown via <b>View &gt; Vessel Detail Fields &gt; Altitude</b>), a
+<b>diamond</b> is an Aid to
 Navigation (hollow for a virtual AtoN with no physical structure), and a
 <b>circle with a cross</b> is a SART, MOB, or EPIRB distress beacon — pinning
-one of these shifts it from bright red to a softer pastel red rather than
+one of these shifts it from bright red to magenta rather than
 gold, so it never stops reading as a distress mark.
 </p>
 <p><img src="legend://markers"></p>

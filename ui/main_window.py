@@ -380,6 +380,7 @@ class MainWindow(QMainWindow):
         self.detail_rot = QLabel("-")
         self.detail_length = QLabel("-")
         self.detail_beam = QLabel("-")
+        self.detail_altitude = QLabel("-")
 
         title = QLabel("Selected Vessel")
         font = title.font()
@@ -414,6 +415,7 @@ class MainWindow(QMainWindow):
             ("Rate of Turn", "Rate of Turn:", self.detail_rot, False),
             ("Length", "Length:", self.detail_length, False),
             ("Beam", "Beam:", self.detail_beam, False),
+            ("Altitude", "Altitude:", self.detail_altitude, False),
         ]
 
         self.detail_field_captions = {}
@@ -1778,7 +1780,7 @@ class MainWindow(QMainWindow):
                 "Nav Status", f"Range ({unit})", "Bearing (deg)", "RSSI",
                 "Last Seen",
                 "Destination", "Draught (m)", "IMO", "Rate of Turn (deg/min)",
-                "Length (m)", "Beam (m)"
+                "Length (m)", "Beam (m)", "Altitude (m)"
             ])
 
             for vessel in self.registry.all():
@@ -1804,7 +1806,8 @@ class MainWindow(QMainWindow):
                     vessel.imo if vessel.imo is not None else "",
                     vessel.rot if vessel.rot is not None else "",
                     vessel.length if vessel.length is not None else "",
-                    vessel.beam if vessel.beam is not None else ""
+                    vessel.beam if vessel.beam is not None else "",
+                    vessel.altitude if vessel.altitude is not None else ""
                 ])
 
         self.status_bar.showMessage(f"Target list exported to {filename}", 5000)
@@ -2445,6 +2448,7 @@ class MainWindow(QMainWindow):
         self.detail_rot.setText("-" if vessel.rot is None else f"{vessel.rot:.0f}°/min")
         self.detail_length.setText("-" if vessel.length is None else f"{vessel.length} m")
         self.detail_beam.setText("-" if vessel.beam is None else f"{vessel.beam} m")
+        self.detail_altitude.setText("-" if vessel.altitude is None else f"{vessel.altitude} m")
 
         window_start = (
             self.graph_window_start(self.replay.current_time) if self.replay.current_time is not None else None
@@ -2653,6 +2657,7 @@ class MainWindow(QMainWindow):
         self.detail_rot.setText("-")
         self.detail_length.setText("-")
         self.detail_beam.setText("-")
+        self.detail_altitude.setText("-")
 
         self.rssi_graph.clear()
         self.rssi_stats_label.setText("")
