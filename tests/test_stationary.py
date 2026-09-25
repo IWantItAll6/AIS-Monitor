@@ -33,10 +33,17 @@ def test_is_stationary(sog, nav_status, expected):
     assert is_stationary(make_vessel(sog=sog, nav_status=nav_status), 0.5) is expected
 
 
-@pytest.mark.parametrize("station_type", ["aton", "base_station", "sart", "sar_aircraft"])
-def test_only_ships_are_attenuated(station_type):
+@pytest.mark.parametrize("station_type", ["sart", "mob", "epirb", "sar_aircraft"])
+def test_beacons_and_aircraft_are_never_attenuated(station_type):
 
     assert not can_attenuate(make_vessel(station_type=station_type))
+
+
+@pytest.mark.parametrize("station_type", ["aton", "base_station"])
+def test_fixed_stations_are_always_stationary_whatever_their_speed(station_type):
+
+    assert attenuated(make_vessel(station_type=station_type, sog=None), 0.5)
+    assert not attenuated(make_vessel(station_type=station_type, sog=None, pinned=True), 0.5)
 
 
 def test_pinned_and_own_ship_are_never_attenuated():
@@ -71,12 +78,12 @@ def test_show_mode_keeps_everything(qapp):
     assert not any(map_view._is_dimmed(v) for v in map_view.vessels)
 
 
-def test_dim_mode_dims_only_the_stationary_ship(qapp):
+def test_dim_mode_dims_the_stationary_ship_and_the_aton(qapp):
 
     _, map_view = make_map(qapp, "Dim")
 
     assert [v.mmsi for v in map_view.shown_vessels()] == [1, 2, 3]
-    assert [v.mmsi for v in map_view.vessels if map_view._is_dimmed(v)] == [2]
+    assert [v.mmsi for v in map_view.vessels if map_view._is_dimmed(v)] == [2, 3]
 
     map_view.grab()
 
@@ -85,7 +92,7 @@ def test_hide_mode_hides_from_drawing_and_clicks(qapp):
 
     _, map_view = make_map(qapp, "Hide")
 
-    assert [v.mmsi for v in map_view.shown_vessels()] == [1, 3]
+    assert [v.mmsi for v in map_view.shown_vessels()] == [1]
 
     stationary_point = map_view.project(50.51, -2.3)
     assert map_view.find_nearest_vessel(stationary_point) != 2

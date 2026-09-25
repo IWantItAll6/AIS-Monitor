@@ -9,6 +9,11 @@ STATIONARY_HIDE = "Hide"
 
 STATIONARY_MODES = (STATIONARY_SHOW, STATIONARY_DIM, STATIONARY_HIDE)
 
+# Fixed stations — always stationary, whatever (if anything) they report
+# for speed. Distress beacons are deliberately not here, nor anywhere the
+# Dim/Hide setting reaches: they must always stand out.
+FIXED_STATION_TYPES = ("aton", "base_station")
+
 
 def is_stationary(vessel, speed_kn):
     """Whether a vessel is sitting still: SOG below speed_kn, or reporting
@@ -28,13 +33,19 @@ def is_stationary(vessel, speed_kn):
 
 def can_attenuate(vessel, own_mmsi=None):
     """Whether the stationary Dim/Hide setting may apply to this station at
-    all: only ordinary ships. Pinned vessels (an explicit "keep following
-    this one"), own ship, and non-ship stations (AtoNs, base stations,
-    distress beacons, aircraft) are always drawn normally."""
+    all: ordinary ships and fixed stations (AtoNs, base stations). Pinned
+    vessels (an explicit "keep following this one"), own ship, distress
+    beacons and aircraft are always drawn normally."""
 
-    return vessel.station_type == "vessel" and not vessel.pinned and vessel.mmsi != own_mmsi
+    return (
+        vessel.station_type in ("vessel",) + FIXED_STATION_TYPES
+        and not vessel.pinned and vessel.mmsi != own_mmsi
+    )
 
 
 def attenuated(vessel, speed_kn, own_mmsi=None):
 
-    return can_attenuate(vessel, own_mmsi) and is_stationary(vessel, speed_kn)
+    if not can_attenuate(vessel, own_mmsi):
+        return False
+
+    return vessel.station_type in FIXED_STATION_TYPES or is_stationary(vessel, speed_kn)

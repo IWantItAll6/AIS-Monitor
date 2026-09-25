@@ -155,8 +155,9 @@ class PreferencesDialog(QDialog):
         self.stationary_mode = QComboBox()
         self.stationary_mode.addItems(["Show normally", "Dim", "Hide"])
         self.stationary_mode.setToolTip(
-            "How ships that are anchored, moored or barely moving are drawn on the map. "
-            "Pinned vessels and non-ship stations are always shown normally."
+            "How anchored, moored or barely-moving ships, Aids to Navigation and base "
+            "stations are drawn on the map. Pinned vessels, distress beacons and aircraft "
+            "are always shown normally."
         )
 
         map_form.addRow("Stationary Vessels", self.stationary_mode)

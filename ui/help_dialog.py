@@ -403,13 +403,14 @@ you change units.
 </p>
 <p>
 <b>Stationary Vessels</b> (also under <b>Map</b>) declutters the map by
-drawing ships that are sitting still either normally (the default),
+drawing things that are sitting still either normally (the default),
 <b>dimmed</b> (marker, label and track faded), or <b>hidden</b> from the
 map. A ship counts as stationary when it's slower than <b>Stationary
 Below</b> (default 0.5 kn), or reports At Anchor / Moored while doing no
-more than 3 kn. Pinned vessels, your own ship, and other station types
-(AtoNs, base stations, beacons, aircraft) are never dimmed or hidden, and
-hidden ships still appear in the target list.
+more than 3 kn; Aids to Navigation and base stations always count as
+stationary. Pinned vessels, your own ship, SART/MOB/EPIRB beacons and SAR
+aircraft are never dimmed or hidden, and anything hidden still appears in
+the target list.
 </p>
 <p>
 <b>Show course/speed prediction line</b> (also under <b>Map</b>, off by
