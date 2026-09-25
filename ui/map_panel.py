@@ -8,9 +8,8 @@ from services.coastline_service import CoastlineService
 from services.places_service import PlacesService
 from services.uk_towns_service import UkTownsService
 from services.shore_distance_service import annotate_shore_distances, FAR_SENTINEL_NM as FAR_SHORE_DISTANCE_NM
-from services.prediction_line import (
-    prediction_line_style, prediction_end_point, STYLE_DIM, SLOW_MODE_HIDE
-)
+from services.prediction_line import has_prediction_line, prediction_end_point
+from services.stationary import attenuated, STATIONARY_SHOW, STATIONARY_DIM, STATIONARY_HIDE
 from services.geo import (
     NM_PER_UNIT, UNIT_SUFFIX, mercator_y, inverse_mercator_y, nice_scale_value, MAX_MERCATOR_LATITUDE
 )
@@ -151,12 +150,17 @@ class MapPanel(QWidget):
 
     # Course/speed prediction line: dashed and thinner than the solid
     # 2px history trail, ending in a small open circle, so it reads as
-    # "where it's going" rather than more track. Dimmed lines (slow
-    # vessels, when that's the chosen mode) drop to a much lower alpha.
+    # "where it's going" rather than more track. Partly transparent so it
+    # doesn't compete with markers and trails for attention.
     PREDICTION_LINE_WIDTH = 1.5
-    PREDICTION_ALPHA = 230
-    PREDICTION_DIM_ALPHA = 80
+    PREDICTION_ALPHA = 150
     PREDICTION_END_RADIUS = 2.5
+
+    # Stationary vessels under the "Dim" setting (OpenCPN's "attenuate"):
+    # marker, label and trail all drawn at these alphas instead of fully
+    # opaque, so they recede without disappearing.
+    DIM_MARKER_ALPHA = 90
+    DIM_TRACK_ALPHA = 60
 
     # Candidate label placements tried, in order, around each vessel marker
     # before giving up and suppressing the label (widest angle spread first
@@ -230,8 +234,9 @@ class MapPanel(QWidget):
 
         self.prediction_enabled = False
         self.prediction_minutes = 10
-        self.prediction_min_speed_kn = 0.5
-        self.prediction_slow_mode = SLOW_MODE_HIDE
+
+        self.stationary_mode = STATIONARY_SHOW
+        self.stationary_speed_kn = 0.5
 
         # Last successful (radius, angle) per vessel MMSI — tried first each
         # frame before searching fresh, so a label's screen position stays
@@ -393,14 +398,35 @@ class MapPanel(QWidget):
 
         self.update()
 
-    def set_prediction_line(self, enabled, minutes, min_speed_kn, slow_mode):
+    def set_prediction_line(self, enabled, minutes):
 
         self.prediction_enabled = enabled
         self.prediction_minutes = minutes
-        self.prediction_min_speed_kn = min_speed_kn
-        self.prediction_slow_mode = slow_mode
 
         self.update()
+
+    def set_stationary_vessels(self, mode, speed_kn):
+        """mode is one of services.stationary.STATIONARY_MODES; speed_kn is
+        also the prediction line's "moving" threshold."""
+
+        self.stationary_mode = mode
+        self.stationary_speed_kn = speed_kn
+
+        self.update()
+
+    def _is_dimmed(self, vessel):
+
+        return self.stationary_mode == STATIONARY_DIM and attenuated(vessel, self.stationary_speed_kn, self.own_mmsi)
+
+    def shown_vessels(self):
+        """self.vessels minus any hidden by the stationary "Hide" setting —
+        used for drawing, click hit-testing and Zoom to Fit alike, so a
+        hidden vessel can't be clicked or framed invisibly."""
+
+        if self.stationary_mode != STATIONARY_HIDE:
+            return self.vessels
+
+        return [v for v in self.vessels if not attenuated(v, self.stationary_speed_kn, self.own_mmsi)]
 
     def set_scrub_animating(self, animating):
 
@@ -466,7 +492,7 @@ class MapPanel(QWidget):
 
     def fit_to_vessels(self):
 
-        positioned = [(v.lat, v.lon) for v in self.vessels if v.lat is not None and v.lon is not None]
+        positioned = [(v.lat, v.lon) for v in self.shown_vessels() if v.lat is not None and v.lon is not None]
 
         # Own ship counts as a target too — otherwise "zoom to fit" can
         # frame every other vessel while leaving your own position outside
@@ -800,7 +826,9 @@ class MapPanel(QWidget):
 
         metrics = painter.fontMetrics()
 
-        visible = [v for v in self.vessels if v.lat is not None and v.lon is not None]
+        visible = [v for v in self.shown_vessels() if v.lat is not None and v.lon is not None]
+
+        dimmed_mmsis = {v.mmsi for v in visible if self._is_dimmed(v)}
 
         for vessel in visible:
 
@@ -809,7 +837,7 @@ class MapPanel(QWidget):
             if len(track) >= 2:
 
                 track_color = QColor(self._marker_color(vessel))
-                track_color.setAlpha(210)
+                track_color.setAlpha(self.DIM_TRACK_ALPHA if vessel.mmsi in dimmed_mmsis else 210)
                 painter.setPen(QPen(track_color, 2))
 
                 polyline = QPolygonF([self.project(t_lat, t_lon) for _, t_lat, t_lon in track])
@@ -845,6 +873,12 @@ class MapPanel(QWidget):
                 continue
 
             vessel_color = self._marker_color(vessel)
+
+            # Marker and label both draw with vessel_color, so this one
+            # alpha dims both.
+            if vessel.mmsi in dimmed_mmsis:
+                vessel_color = QColor(vessel_color)
+                vessel_color.setAlpha(self.DIM_MARKER_ALPHA)
 
             # A ring around the marker, independent of fill color, so a
             # pinned vessel is still distinguishable from a normal one
@@ -1017,15 +1051,13 @@ class MapPanel(QWidget):
 
         for vessel in vessels:
 
-            style = prediction_line_style(vessel, self.prediction_min_speed_kn, self.prediction_slow_mode)
-
-            if style is None:
+            if not has_prediction_line(vessel, self.stationary_speed_kn):
                 continue
 
             end_lat, end_lon = prediction_end_point(vessel, self.prediction_minutes)
 
             color = QColor(self._marker_color(vessel))
-            color.setAlpha(self.PREDICTION_DIM_ALPHA if style == STYLE_DIM else self.PREDICTION_ALPHA)
+            color.setAlpha(self.PREDICTION_ALPHA)
 
             start = self.project(vessel.lat, vessel.lon)
             end = self.project(end_lat, end_lon)
@@ -1118,7 +1150,7 @@ class MapPanel(QWidget):
         closest_mmsi = None
         closest_dist = hit_radius
 
-        for vessel in self.vessels:
+        for vessel in self.shown_vessels():
 
             lat, lon = vessel.lat, vessel.lon
 

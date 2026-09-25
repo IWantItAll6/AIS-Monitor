@@ -2,17 +2,16 @@ import pytest
 
 from models.vessel import Vessel
 from services.geo import calculate_range_bearing, destination_point
-from services.prediction_line import (
-    prediction_line_style, prediction_end_point, STYLE_NORMAL, STYLE_DIM
-)
+from services.prediction_line import has_prediction_line, prediction_end_point
 from ui.main_window import MainWindow
 from ui.preferences_dialog import PreferencesDialog
 
 
-def make_vessel(sog=10.0, cog=90.0, station_type="vessel"):
+def make_vessel(sog=10.0, cog=90.0, station_type="vessel", nav_status=None):
 
     vessel = Vessel(mmsi=235000001, lat=50.5, lon=-2.3, sog=sog, cog=cog)
     vessel.station_type = station_type
+    vessel.nav_status = nav_status
 
     return vessel
 
@@ -39,38 +38,50 @@ def test_end_point_is_speed_times_time_along_course():
     assert bearing == pytest.approx(45)
 
 
-def test_moving_vessel_gets_a_normal_line():
+def test_moving_vessel_gets_a_line():
 
-    assert prediction_line_style(make_vessel(sog=10), 0.5, "Hide") == STYLE_NORMAL
-
-
-@pytest.mark.parametrize("slow_mode,expected", [("Draw", STYLE_NORMAL), ("Dim", STYLE_DIM), ("Hide", None)])
-def test_slow_vessel_follows_the_slow_mode(slow_mode, expected):
-
-    assert prediction_line_style(make_vessel(sog=0.3), 0.5, slow_mode) == expected
+    assert has_prediction_line(make_vessel(sog=10), 0.5)
 
 
-def test_speed_exactly_at_the_minimum_counts_as_moving():
+def test_stationary_vessel_gets_no_line():
 
-    assert prediction_line_style(make_vessel(sog=0.5), 0.5, "Hide") == STYLE_NORMAL
+    assert not has_prediction_line(make_vessel(sog=0.3), 0.5)
+    assert not has_prediction_line(make_vessel(sog=0.2, nav_status="Moored"), 0.5)
+
+
+def test_speed_exactly_at_the_threshold_counts_as_moving():
+
+    assert has_prediction_line(make_vessel(sog=0.5), 0.5)
 
 
 @pytest.mark.parametrize("sog,cog", [(None, 90), (10, None), (0, 90)])
 def test_no_line_without_speed_and_course(sog, cog):
 
-    # Zero speed has no length to draw, even when slow vessels are drawn.
-    assert prediction_line_style(make_vessel(sog=sog, cog=cog), 0.5, "Draw") is None
+    # Zero speed has no length to draw, even with the threshold at 0.
+    assert not has_prediction_line(make_vessel(sog=sog, cog=cog), 0)
 
 
 @pytest.mark.parametrize("station_type", ["base_station", "aton"])
 def test_fixed_stations_never_get_a_line(station_type):
 
-    assert prediction_line_style(make_vessel(station_type=station_type), 0.5, "Draw") is None
+    assert not has_prediction_line(make_vessel(station_type=station_type), 0)
+
+
+def test_sar_aircraft_line_is_a_tenth_of_the_ship_length():
+
+    # 120 kn: 10 min would be 20 NM; a tenth of that is 2 NM.
+    aircraft = make_vessel(sog=120, cog=90, station_type="sar_aircraft")
+
+    lat, lon = prediction_end_point(aircraft, 10)
+
+    distance, _ = calculate_range_bearing(50.5, -2.3, lat, lon)
+
+    assert distance == pytest.approx(2)
 
 
 def test_sar_aircraft_gets_a_line():
 
-    assert prediction_line_style(make_vessel(sog=120, station_type="sar_aircraft"), 0.5, "Hide") == STYLE_NORMAL
+    assert has_prediction_line(make_vessel(sog=120, station_type="sar_aircraft"), 0.5)
 
 
 def test_prediction_line_is_off_by_default(qapp):
@@ -80,37 +91,27 @@ def test_prediction_line_is_off_by_default(qapp):
     assert window.map_view.prediction_enabled is False
 
 
-def test_preferences_prediction_settings_round_trip_and_apply(qapp, monkeypatch):
+def test_preferences_prediction_settings_round_trip_and_apply(qapp):
 
     window = MainWindow()
 
     dialog = PreferencesDialog(window.settings)
 
-    # Dependent controls follow the checkbox.
+    # The length follows the checkbox.
     assert not dialog.prediction_line_minutes.isEnabled()
 
     dialog.prediction_line_enabled.setChecked(True)
     assert dialog.prediction_line_minutes.isEnabled()
 
     dialog.prediction_line_minutes.setValue(6)
-    dialog.prediction_min_speed.setValue(2.0)
-    dialog.prediction_slow_mode.setCurrentText("Dim")
     dialog.accept()
 
     assert window.settings["prediction_line_enabled"] is True
     assert window.settings["prediction_line_minutes"] == 6
-    assert window.settings["prediction_min_speed_kn"] == 2.0
-    assert window.settings["prediction_slow_mode"] == "Dim"
 
-    dialog2 = PreferencesDialog(window.settings)
-    assert dialog2.prediction_slow_mode.currentText() == "Dim"
-    assert dialog2.prediction_min_speed.value() == 2.0
+    window.apply_map_vessel_display_settings()
 
-    window.apply_prediction_line_settings()
-
-    map_view = window.map_view
-    assert (map_view.prediction_enabled, map_view.prediction_minutes,
-            map_view.prediction_min_speed_kn, map_view.prediction_slow_mode) == (True, 6, 2.0, "Dim")
+    assert (window.map_view.prediction_enabled, window.map_view.prediction_minutes) == (True, 6)
 
 
 def test_map_draws_prediction_lines_without_error(qapp):
@@ -122,7 +123,7 @@ def test_map_draws_prediction_lines_without_error(qapp):
     for i, vessel in enumerate(vessels):
         vessel.mmsi += i
 
-    window.map_view.set_prediction_line(True, 10, 0.5, "Dim")
+    window.map_view.set_prediction_line(True, 10)
     window.map_view.update_vessels(vessels, {"lat": None, "lon": None, "fix": False}, [])
     window.map_view.set_center(50.5, -2.3)
 

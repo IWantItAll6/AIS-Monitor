@@ -18,7 +18,7 @@ from PySide6.QtGui import QColor
 
 from services.geo import UNIT_SUFFIX
 from services.range_limit import convert_range_limit
-from services.prediction_line import SLOW_MODES
+from services.stationary import STATIONARY_MODES
 
 
 class PreferencesDialog(QDialog):
@@ -151,6 +151,28 @@ class PreferencesDialog(QDialog):
 
         map_form.addRow("Coastal Threshold (nm)", self.coastal_threshold_nm)
 
+        # Display labels for the stored STATIONARY_MODES values, same order.
+        self.stationary_mode = QComboBox()
+        self.stationary_mode.addItems(["Show normally", "Dim", "Hide"])
+        self.stationary_mode.setToolTip(
+            "How ships that are anchored, moored or barely moving are drawn on the map. "
+            "Pinned vessels and non-ship stations are always shown normally."
+        )
+
+        map_form.addRow("Stationary Vessels", self.stationary_mode)
+
+        self.stationary_speed = QDoubleSpinBox()
+        self.stationary_speed.setRange(0, 20)
+        self.stationary_speed.setSingleStep(0.5)
+        self.stationary_speed.setDecimals(1)
+        self.stationary_speed.setSuffix(" kn")
+        self.stationary_speed.setToolTip(
+            "Ships slower than this (or reporting At Anchor / Moored) count as stationary. "
+            "Also the speed a vessel needs for a prediction line."
+        )
+
+        map_form.addRow("Stationary Below", self.stationary_speed)
+
         self.prediction_line_enabled = QCheckBox("Show course/speed prediction line")
         self.prediction_line_enabled.setToolTip(
             "A dashed line ahead of each moving vessel, showing where it will be "
@@ -165,24 +187,6 @@ class PreferencesDialog(QDialog):
         self.prediction_line_minutes.setSuffix(" min")
 
         map_form.addRow("Prediction Length", self.prediction_line_minutes)
-
-        self.prediction_min_speed = QDoubleSpinBox()
-        self.prediction_min_speed.setRange(0, 20)
-        self.prediction_min_speed.setSingleStep(0.5)
-        self.prediction_min_speed.setDecimals(1)
-        self.prediction_min_speed.setSuffix(" kn")
-        self.prediction_min_speed.setToolTip(
-            "Vessels slower than this are treated as stationary — their speed "
-            "and course are mostly GPS noise."
-        )
-
-        map_form.addRow("Prediction Minimum Speed", self.prediction_min_speed)
-
-        # Display labels for the stored SLOW_MODES values, same order.
-        self.prediction_slow_mode = QComboBox()
-        self.prediction_slow_mode.addItems(["Draw normally", "Dim", "Hide"])
-
-        map_form.addRow("Below Minimum Speed", self.prediction_slow_mode)
 
         layout.addLayout(map_form)
 
@@ -299,8 +303,7 @@ class PreferencesDialog(QDialog):
 
     def update_prediction_controls_enabled(self, enabled):
 
-        for widget in (self.prediction_line_minutes, self.prediction_min_speed, self.prediction_slow_mode):
-            widget.setEnabled(enabled)
+        self.prediction_line_minutes.setEnabled(enabled)
 
     def update_range_limit_suffix(self):
 
@@ -327,10 +330,12 @@ class PreferencesDialog(QDialog):
 
         self.prediction_line_enabled.setChecked(self.settings.get("prediction_line_enabled", False))
         self.prediction_line_minutes.setValue(int(self.settings.get("prediction_line_minutes", 10)))
-        self.prediction_min_speed.setValue(float(self.settings.get("prediction_min_speed_kn", 0.5)))
 
-        slow_mode = self.settings.get("prediction_slow_mode", "Hide")
-        self.prediction_slow_mode.setCurrentIndex(SLOW_MODES.index(slow_mode) if slow_mode in SLOW_MODES else 2)
+        stationary_mode = self.settings.get("stationary_mode", "Show")
+        self.stationary_mode.setCurrentIndex(
+            STATIONARY_MODES.index(stationary_mode) if stationary_mode in STATIONARY_MODES else 0
+        )
+        self.stationary_speed.setValue(float(self.settings.get("stationary_speed_kn", 0.5)))
 
         self.update_prediction_controls_enabled(self.prediction_line_enabled.isChecked())
 
@@ -360,8 +365,9 @@ class PreferencesDialog(QDialog):
 
         self.settings["prediction_line_enabled"] = self.prediction_line_enabled.isChecked()
         self.settings["prediction_line_minutes"] = self.prediction_line_minutes.value()
-        self.settings["prediction_min_speed_kn"] = self.prediction_min_speed.value()
-        self.settings["prediction_slow_mode"] = SLOW_MODES[self.prediction_slow_mode.currentIndex()]
+
+        self.settings["stationary_mode"] = STATIONARY_MODES[self.stationary_mode.currentIndex()]
+        self.settings["stationary_speed_kn"] = self.stationary_speed.value()
 
         self.settings["vessel_color"] = self.vessel_color
         self.settings["pinned_color"] = self.pinned_color

@@ -74,13 +74,15 @@ class SettingsService:
         # Messages/min appended to the status bar (View menu).
         "show_message_rate": False,
 
-        # Course/speed prediction line ahead of each vessel (Preferences >
-        # Map). Off by default; below the minimum speed the line is drawn
-        # normally, dimmed or hidden per prediction_slow_mode.
+        # Preferences > Map. A ship below stationary_speed_kn (or reporting
+        # At Anchor/Moored) is "stationary": drawn normally, dimmed or
+        # hidden per stationary_mode, and never given a prediction line.
+        "stationary_mode": "Show",
+        "stationary_speed_kn": 0.5,
+
+        # Course/speed prediction line ahead of each moving vessel.
         "prediction_line_enabled": False,
         "prediction_line_minutes": 10,
-        "prediction_min_speed_kn": 0.5,
-        "prediction_slow_mode": "Hide",
 
         "recordings_folder": "data/recordings",
 

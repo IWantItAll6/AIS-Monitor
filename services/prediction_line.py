@@ -1,50 +1,38 @@
 from services.geo import destination_point
+from services.stationary import is_stationary
 
-
-# What happens to the prediction line of a vessel slower than the minimum
-# speed — slow vessels' SOG/COG is mostly GPS noise (a moored boat
-# "moving" at 0.2 kn in a random direction), so by default they get none.
-SLOW_MODE_DRAW = "Draw"
-SLOW_MODE_DIM = "Dim"
-SLOW_MODE_HIDE = "Hide"
-
-SLOW_MODES = (SLOW_MODE_DRAW, SLOW_MODE_DIM, SLOW_MODE_HIDE)
 
 # Stations that don't move, so a "prediction" would only draw noise.
 NO_PREDICTION_STATION_TYPES = ("base_station", "aton")
 
-STYLE_NORMAL = "normal"
-STYLE_DIM = "dim"
+# SAR aircraft get a tenth of the ship prediction length: at aircraft
+# speeds a 10-minute straight line runs ~20 NM, and a turning search
+# pattern makes it swing wildly between 10s reports. A tenth (1 min at
+# the default) stays short enough to still mean something mid-turn.
+AIRCRAFT_PREDICTION_DIVISOR = 10
 
 
-def prediction_line_style(vessel, min_speed_kn, slow_mode):
-    """How to draw a vessel's prediction line: STYLE_NORMAL, STYLE_DIM, or
-    None for no line at all (no position/SOG/COG, a fixed station, not
-    moving, or below min_speed_kn with slow_mode set to hide)."""
+def has_prediction_line(vessel, stationary_speed_kn):
+    """Whether a vessel gets a prediction line: it needs a position, SOG
+    and COG, and must actually be moving — a stationary vessel's SOG/COG
+    is mostly GPS noise (a moored boat "moving" at 0.2 kn in a random
+    direction), so it gets none. Same stationary rule as the map's
+    Dim/Hide setting (services/stationary.py)."""
 
     if vessel.station_type in NO_PREDICTION_STATION_TYPES:
-        return None
+        return False
 
     if vessel.lat is None or vessel.lon is None or vessel.sog is None or vessel.cog is None:
-        return None
+        return False
 
-    # Zero-length regardless of mode — nothing to draw.
-    if vessel.sog <= 0:
-        return None
-
-    if vessel.sog >= min_speed_kn:
-        return STYLE_NORMAL
-
-    if slow_mode == SLOW_MODE_DRAW:
-        return STYLE_NORMAL
-
-    if slow_mode == SLOW_MODE_DIM:
-        return STYLE_DIM
-
-    return None
+    return vessel.sog > 0 and not is_stationary(vessel, stationary_speed_kn)
 
 
 def prediction_end_point(vessel, minutes):
-    """Where the vessel will be in `minutes` at its current SOG/COG."""
+    """Where the vessel will be in `minutes` (a tenth of that for SAR
+    aircraft) at its current SOG/COG."""
+
+    if vessel.station_type == "sar_aircraft":
+        minutes /= AIRCRAFT_PREDICTION_DIVISOR
 
     return destination_point(vessel.lat, vessel.lon, vessel.cog, vessel.sog * minutes / 60)

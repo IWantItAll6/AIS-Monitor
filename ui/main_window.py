@@ -310,7 +310,7 @@ class MainWindow(QMainWindow):
         self.map_view.set_pinned_color(self.settings["pinned_color"])
         self.map_view.set_show_place_names(self.settings["show_place_names"])
         self.map_view.set_daylight_mode(self.settings.get("map_daylight_mode", False))
-        self.apply_prediction_line_settings()
+        self.apply_map_vessel_display_settings()
         self.map_view.set_coastal_filter(
             self.settings["coastal_towns_only"], float(self.settings["coastal_threshold_nm"])
         )
@@ -1514,7 +1514,7 @@ class MainWindow(QMainWindow):
             self.map_view.set_vessel_color(self.settings["vessel_color"])
             self.map_view.set_pinned_color(self.settings["pinned_color"])
             self.map_view.set_daylight_mode(self.settings["map_daylight_mode"])
-            self.apply_prediction_line_settings()
+            self.apply_map_vessel_display_settings()
             self.rssi_graph.set_vessel_color(self.settings["vessel_color"])
             self.rssi_graph.set_pinned_color(self.settings["pinned_color"])
             self.map_view.set_coastal_filter(
@@ -1763,13 +1763,15 @@ class MainWindow(QMainWindow):
         apply_title_bar_theme(dialog, self.settings["theme"])
         dialog.exec()
 
-    def apply_prediction_line_settings(self):
+    def apply_map_vessel_display_settings(self):
 
+        self.map_view.set_stationary_vessels(
+            self.settings.get("stationary_mode", "Show"),
+            float(self.settings.get("stationary_speed_kn", 0.5)),
+        )
         self.map_view.set_prediction_line(
             self.settings.get("prediction_line_enabled", False),
             int(self.settings.get("prediction_line_minutes", 10)),
-            float(self.settings.get("prediction_min_speed_kn", 0.5)),
-            self.settings.get("prediction_slow_mode", "Hide"),
         )
 
     def show_message_stats(self):

@@ -402,17 +402,27 @@ every vessel. The limit is in your chosen distance unit, and converts if
 you change units.
 </p>
 <p>
+<b>Stationary Vessels</b> (also under <b>Map</b>) declutters the map by
+drawing ships that are sitting still either normally (the default),
+<b>dimmed</b> (marker, label and track faded), or <b>hidden</b> from the
+map. A ship counts as stationary when it's slower than <b>Stationary
+Below</b> (default 0.5 kn), or reports At Anchor / Moored while doing no
+more than 3 kn. Pinned vessels, your own ship, and other station types
+(AtoNs, base stations, beacons, aircraft) are never dimmed or hidden, and
+hidden ships still appear in the target list.
+</p>
+<p>
 <b>Show course/speed prediction line</b> (also under <b>Map</b>, off by
-default) draws a <b>dashed</b> line ahead of each moving vessel, ending in
-a small circle at where it will be after <b>Prediction Length</b> minutes
-(default 10) at its current speed and course over ground. It's dashed and
-thinner so it can't be mistaken for the solid track trailing behind.
-Vessels slower than <b>Prediction Minimum Speed</b> (default 0.5 kn), whose
-speed and course are mostly GPS noise, are handled by <b>Below Minimum
-Speed</b>: drawn normally, dimmed, or hidden (the default). Base stations and
-Aids to Navigation never get one. While the line is on, vessel labels move
-to the side of the vessel instead of ahead of it, so they don't sit on
-their own line.
+default) draws a <b>dashed</b>, semi-transparent line ahead of each moving
+vessel, ending in a small circle at where it will be after <b>Prediction
+Length</b> minutes (default 10) at its current speed and course over
+ground. It's dashed and thinner so it can't be mistaken for the solid track
+trailing behind. Stationary ships (as above — their speed and course are
+mostly GPS noise), base stations and Aids to Navigation never get one. SAR
+aircraft get a line a tenth as long, since at their speed and in a turn a
+full-length line would swing wildly. While the line is on, vessel labels
+move to the side of the vessel instead of ahead of it, so they don't sit
+on their own line.
 </p>
 
 <h3>Keyboard Shortcuts</h3>
